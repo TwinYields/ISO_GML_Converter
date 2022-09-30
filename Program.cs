@@ -28,6 +28,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace ISO_GML_Converter
 {
@@ -119,6 +120,9 @@ namespace ISO_GML_Converter
             LogElementType<System.String> TimeStartTOFD = (LogElementType<System.String>)TLGdata.datalogheader.Where(val => val.name == "TimeStartTOFD").Single();
             name += "_" + TimeStartTOFD.values.First().Replace(":", ".");
 
+            char[] invalids = System.IO.Path.GetInvalidFileNameChars();
+            name = String.Join("", name.Split(invalids, StringSplitOptions.RemoveEmptyEntries)).TrimEnd('.');
+
             return name;
         }
 
@@ -196,25 +200,26 @@ namespace ISO_GML_Converter
                     }
                     // Attribute B and C are not valid for TIM in TLG
 
+
                     foreach(var PTN in TLGFile.Element("TIM").Descendants("PTN"))
                     {
-                        if(PTN.Attribute("A").Value == "")
+                        if(PTN.Attribute("A") != null && PTN.Attribute("A").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionNorth"));
-                        if(PTN.Attribute("B").Value == "")
+                        if(PTN.Attribute("B") != null && PTN.Attribute("B").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionEast"));
-                        if(PTN.Attribute("C").Value == "")
+                        if (PTN.Attribute("C") != null && PTN.Attribute("C").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionUp"));
-                        if(PTN.Attribute("D").Value == "")
+                        if(PTN.Attribute("D") != null && PTN.Attribute("D").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.Byte>("PositionStatus"));
-                        if(PTN.Attribute("E").Value == "")
+                        if(PTN.Attribute("E") != null && PTN.Attribute("E").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.UInt16>("PDOP"));
-                        if(PTN.Attribute("F").Value == "")
+                        if(PTN.Attribute("F") != null && PTN.Attribute("F").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.UInt16>("HDOP"));
-                        if(PTN.Attribute("G").Value == "")
+                        if(PTN.Attribute("G") != null && PTN.Attribute("G").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.Byte>("NumberOfSatellites"));
-                        if(PTN.Attribute("H").Value == "")
+                        if(PTN.Attribute("H") != null && PTN.Attribute("H").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.String>("GpsUtcTime"));
-                        if(PTN.Attribute("I").Value == "")
+                        if(PTN.Attribute("I") != null && PTN.Attribute("I").Value == "")
                             TLGdata.datalogheader.Add(new LogElementType<System.String>("GpsUtcDate"));
                     }
 
@@ -385,9 +390,19 @@ namespace ISO_GML_Converter
 
             LogElementType<System.Int32> longitude = (LogElementType<System.Int32>)TLGdata.datalogheader.Where(header => header.name == "PositionEast").Single();
             LogElementType<System.Int32> latitude = (LogElementType<System.Int32>)TLGdata.datalogheader.Where(header => header.name == "PositionNorth").Single();
-            LogElementType<System.Int32> height = (LogElementType<System.Int32>)TLGdata.datalogheader.Where(header => header.name == "PositionUp").Single();
-
-
+            LogElementType<System.Int32> height;
+            
+            // If data is missing height use 0
+            var heightData = TLGdata.datalogheader.Where(header => header.name == "PositionUp").ToList();
+            if (heightData.Count > 0)
+            {
+                height = (LogElementType<System.Int32>)heightData.First();
+            }
+            else 
+            { 
+                height = new LogElementType<System.Int32>("height");
+                height.values = new List<System.Int32>(new System.Int32[latitude.values.Count]);
+            }
             string boundingbox = longitude.values.Min() * 0.0000001 + "," + latitude.values.Min() * 0.0000001 + " " + longitude.values.Max() * 0.0000001 + "," + latitude.values.Max() * 0.0000001;
 
             XDocument GMLFile = new XDocument(
@@ -415,9 +430,15 @@ namespace ISO_GML_Converter
                         datapoint.Add(new XElement(tnt + header.name.Replace(" ", "_"), header.getValueString(index)));
                 }
                     
-
+                
                 foreach (var element in TLGdata.datalogdata)
-                    datapoint.Add(new XElement(tnt + element.name.Replace(" ", "_").Replace("&", "_").Replace("(", "_").Replace(")", "_"), element.getValueString(index)));
+                {
+                    string elName = element.name.Replace(" ", "_").Replace("&", "_").Replace("(", "_").Replace(")", "_");
+                    if (Regex.IsMatch(elName, @"^[0-9]"))
+                        elName = "X" + elName;
+                    datapoint.Add(new XElement(tnt + elName, element.getValueString(index)));
+                }
+                
 
                 datapoint.Add(new XElement(tnt + "_POINT_",
                         new XElement(gml + "Point",
