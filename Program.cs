@@ -85,6 +85,15 @@ namespace ISO_GML_Converter
     {
         public TimeLogData TLGdata = new TimeLogData();
 
+        enum OutputType
+        {
+            GML,
+            CSV
+        };
+
+        OutputType outputType = OutputType.GML;
+
+
         static void Main(string[] args)
         {
             Program program = new Program();
@@ -94,11 +103,47 @@ namespace ISO_GML_Converter
 
         void run(string[] args)
         {
-            string taskfilename;
-            if (args.Length >= 1)
-                taskfilename = args[0];
-            else
-                taskfilename = Directory.GetCurrentDirectory() + "\\TASKDATA.XML";
+            string taskfilename = Directory.GetCurrentDirectory() + "\\TASKDATA.XML";
+
+            foreach (var arg in args)
+            {
+                if (arg.StartsWith("-"))
+                {
+                    string[] options = arg.Split('=');
+                                           
+                    switch(options[0])
+                    {
+                        case "-o":
+                        case "-output":
+                            switch(options[1])
+                            {
+                                case "GML":
+                                case "gml":
+                                    outputType = OutputType.GML;
+                                    break;
+                                case "CSV":
+                                case "csv":
+                                    outputType = OutputType.CSV;
+                                    break;
+                                default:
+                                    Console.WriteLine("Unknown output type.");
+                                    Console.WriteLine("Possible values are [GML, CSV]");
+                                    return;
+                            }
+                            break;
+                        default:
+                            Console.WriteLine("Unknown parameter");
+                            Console.WriteLine("Possible values are:");
+                            Console.WriteLine("-o/-output=[GML, CSV]");
+                            return;
+                    }
+                }
+                else
+                {
+                    taskfilename = args[0];
+                }
+            }
+                            
 
             Console.WriteLine("Open file " + taskfilename);
             Console.WriteLine("==============================================");
@@ -370,9 +415,19 @@ namespace ISO_GML_Converter
                         data.values.RemoveAt(0);
                     }
 
-                    if (!writeGMLFile(generateName() + TLG.Attribute("A").Value + ".GML"))
+                    if (outputType == OutputType.GML)
                     {
-                        Console.WriteLine("ERROR IN WRITING GML");
+                        if (!writeGMLFile(generateName() + TLG.Attribute("A").Value + ".GML"))
+                        {
+                            Console.WriteLine("ERROR IN WRITING GML");
+                        }
+                    }
+                    else if (outputType == OutputType.CSV)
+                    {
+                        if (!writeCSVFile(generateName() + TLG.Attribute("A").Value + ".CSV"))
+                        {
+                            Console.WriteLine("ERROR IN WRITING GML");
+                        }
                     }
 
                     TLGdata.datalogheader.Clear();
@@ -459,6 +514,54 @@ namespace ISO_GML_Converter
 
             GMLFile.Save(filename);
             
+            return true;
+        }
+
+
+
+        bool writeCSVFile(String filename)
+        {
+            
+            StreamWriter file = new StreamWriter(filename);
+
+            // Write variable names to the first line
+            foreach (var header in TLGdata.datalogheader)
+            {
+                file.Write(header.name + "; ");
+            }
+
+            foreach (var element in TLGdata.datalogdata)
+            {
+                string elName = element.name.Replace(" ", "_").Replace("&", "_").Replace("(", "_").Replace(")", "_");
+                if (Regex.IsMatch(elName, @"^[0-9]"))
+                    elName = "X" + elName;
+
+                file.Write(elName + "; ");
+            }
+            file.Write("\n");
+
+
+            // Write values
+            int index = 0;
+            while (index < TLGdata.datalogheader.ElementAt(0).getSize())
+            {
+
+                foreach (var header in TLGdata.datalogheader)
+                {
+                    file.Write(header.getValueString(index) + "; ");
+                }
+
+
+                foreach (var element in TLGdata.datalogdata)
+                {
+                    file.Write(element.getValueString(index) + "; ");
+                }
+
+                file.Write("\n");
+                index++;
+            }
+                        
+
             return true;
         }
     }
