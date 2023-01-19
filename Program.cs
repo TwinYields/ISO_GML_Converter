@@ -48,8 +48,7 @@ namespace ISO_GML_Converter
     {
         public string name;
         public Type type;
-
-
+        public DPD_Reference DPD;
 
         public virtual string getValueString(int index)
         {
@@ -65,15 +64,12 @@ namespace ISO_GML_Converter
     public class LogElementType<T> : LogElement
     {
         public List<T> values;
-        public DPD_Reference DPD;
 
-        public LogElementType(string description /*, DPD_Reference reference = new PDP*/)
+        public LogElementType(string description)
         {
             name = description;
             values = new List<T>();
             type = typeof(T);
-
-            //DPD = reference;
         }
 
         public override string getValueString(int index)
@@ -107,7 +103,15 @@ namespace ISO_GML_Converter
 
     public class TractorImplementGeometry
     {
+        public enum ConnectionType
+        {
+            Mounted,
+            Hitched
+        }
+        public ConnectionType connection;
+
         public string element;      // reference to DeviceElementReferencePoint
+        public string description;
 
         public Point TractorDRP;    // DeficeReferencePoint
         public Point TractorNRP;    // NavigationReferencePoint
@@ -116,6 +120,9 @@ namespace ISO_GML_Converter
         public Point ImplementDRP;  // DeficeReferencePoint
         public Point ImplementCRP;  // ConnectorReferencePoint
         public Point ImplementERP;  // DeviceElementReferencePoint
+
+
+        public List<LogElement> datalogdata = new List<LogElement>();
     }
 
     public class TimeLogData
@@ -197,22 +204,22 @@ namespace ISO_GML_Converter
             Console.WriteLine("Open file " + taskfilename);
             Console.WriteLine("==============================================");
                                    
-            if (!readTaskFile(taskfilename))
+            if (!convertTaskFile(taskfilename))
             {
-                Console.WriteLine("ERROR IN READING FILE");
+                Console.WriteLine("ERROR IN CONVERTING FILE");
                 return;
             }
         }
 
-        string generateName()
+        string generateName(string description)
         {
-            string name = TLGdata.farm + "_" + TLGdata.field + "_" + TLGdata.taskname + "_";
+            string name = TLGdata.farm + " " + TLGdata.field + " " + TLGdata.taskname + " " + description;
 
             LogElementType<System.String> TimeStartDATE = (LogElementType<System.String>)TLGdata.datalogheader.Where(val => val.name == "TimeStartDATE").Single();
-            name += TimeStartDATE.values.First();
+            name += " " + TimeStartDATE.values.First();
 
             LogElementType<System.String> TimeStartTOFD = (LogElementType<System.String>)TLGdata.datalogheader.Where(val => val.name == "TimeStartTOFD").Single();
-            name += "_" + TimeStartTOFD.values.First().Replace(":", ".");
+            name += " " + TimeStartTOFD.values.First().Replace(":", ".");
 
             char[] invalids = System.IO.Path.GetInvalidFileNameChars();
             name = String.Join("", name.Split(invalids, StringSplitOptions.RemoveEmptyEntries)).TrimEnd('.');
@@ -310,10 +317,385 @@ namespace ISO_GML_Converter
             return output;
         }
 
-        bool readTaskFile(String filename)
+        bool extractGeometryInformation(XElement TSK)
         {
+            bool retvalue = true;
+
+            // TODO: read True Rotation Point; DDI=306 and 304 (Does anyone use it?)
+            // TODO: read Actual relative connection angle; DDI=466 
+            // TODO: read Yaw Angle: DDI=144
+
+            try
+            {
+
+                // include devices that are listed in Task and are connected together
+                foreach (var CNN in TSK.Elements("CNN"))
+                {
+                    // TODO: read Connector Type; DDI=157  (0=unknown is default)
+
+                    var DVC_0 = TSK.Ancestors().Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("A").Value).Single();
+                    Point CRP_0 = extractGeometryOffset(DVC_0.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("B").Value).Single());
+
+                    var DVC_1 = TSK.Ancestors().Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("C").Value).Single();
+                    Point CRP_1 = extractGeometryOffset(DVC_1.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("D").Value).Single());
+
+                    var NRP = DVC_0.Descendants("DET").Where(det => det.Attribute("C").Value == "7");
+                    if (!NRP.Any())
+                    {
+                        // assumption: The tractor has GNSS mounted on; DVC_0=tractor, DVC_1=implement. Swap if GNSS is not found from DVC_0
+                        var DVC_temp = DVC_0;
+                        DVC_0 = DVC_1;
+                        DVC_1 = DVC_temp;
+
+                        var CRP_temp = CRP_0;
+                        CRP_0 = CRP_1;
+                        CRP_1 = CRP_temp;
+                    }
+
+                    NRP = DVC_0.Descendants("DET").Where(det => det.Attribute("C").Value == "7");
+                    if (!NRP.Any())
+                        continue;   // No GNSS position found, cannot do anything
+
+                    Point NRP_0 = extractGeometryOffset(NRP.Single());
+
+                    var DRP_1 = DVC_1.Descendants("DET").Where(det => det.Attribute("F").Value == "0").Single();
+                    TLGdata.geometry.Add(new TractorImplementGeometry()
+                    {
+                        connection = TractorImplementGeometry.ConnectionType.Hitched,
+                        TractorCRP = CRP_0,
+                        TractorNRP = NRP_0,
+                        ImplementCRP = CRP_1,
+                        ImplementERP = new Point(),
+                        element = DRP_1.Attribute("A").Value
+                    });
+
+                    foreach (var ERP in DVC_1.Descendants("DET").Where(det => hasGeometryOffset(det)))
+                    {
+                        TLGdata.geometry.Add(new TractorImplementGeometry()
+                        {
+                            connection = TractorImplementGeometry.ConnectionType.Hitched,
+                            TractorCRP = CRP_0,
+                            TractorNRP = NRP_0,
+                            ImplementCRP = CRP_1,
+                            ImplementERP = extractGeometryOffset(ERP),
+                            element = ERP.Attribute("A").Value
+                        });
+                    }
+                }
+
+                // include also all other devices that has GNSS mounted on
+                foreach (var NRP in TSK.Ancestors().Descendants("DET").Where(det => det.Attribute("C").Value == "7"))
+                {
+                    var DVC_0 = NRP.Ancestors("DVC");
+                    var DRP_0 = DVC_0.Descendants("DET").Where(det => det.Attribute("F").Value == "0").Single();
+
+                    if (!TLGdata.geometry.Where(geometry => geometry.element == DRP_0.Attribute("A").Value).Any())
+                    {
+                        Point NRP_0 = extractGeometryOffset(NRP);
+
+                        TLGdata.geometry.Add(new TractorImplementGeometry()
+                        {
+                            connection = TractorImplementGeometry.ConnectionType.Mounted,
+                            TractorCRP = new Point(),
+                            TractorNRP = NRP_0,
+                            ImplementCRP = new Point(),
+                            ImplementERP = new Point(),
+                            element = DRP_0.Attribute("A").Value
+                        });
+
+                        foreach (var ERP in DVC_0.Descendants("DET").Where(det => hasGeometryOffset(det)))
+                        {
+                            TLGdata.geometry.Add(new TractorImplementGeometry()
+                            {
+                                connection = TractorImplementGeometry.ConnectionType.Mounted,
+                                TractorCRP = new Point(),
+                                TractorNRP = NRP_0,
+                                ImplementCRP = new Point(),
+                                ImplementERP = extractGeometryOffset(ERP),
+                                element = ERP.Attribute("A").Value
+                            });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) 
+            {
+                Console.WriteLine("ERROR IN EXTRACTING GEOMETRY INFORMATION");
+                Console.WriteLine(ex.ToString());
+
+                retvalue = false;
+            }
+
+            TLGdata.geometry.Add(new TractorImplementGeometry()
+            {
+                connection = TractorImplementGeometry.ConnectionType.Mounted,
+                TractorCRP = new Point(),
+                TractorNRP = new Point(),
+                ImplementCRP = new Point(),
+                ImplementERP = new Point(),
+                element = "original"
+            });
+
+            Console.WriteLine("******* Geometry: **********");
+            foreach (var geometry in TLGdata.geometry)
+            {
+                geometry.description = geometry.element;
+                var DET = TSK.Ancestors().Descendants("DET").Where(det => det.Attribute("A").Value == geometry.element);
+                if (DET.Any() && DET.Single().Attributes("D").Any())
+                {
+                    var DVC = DET.Ancestors("DVC").Single();
+                    if (DVC.Attributes("B").Any())
+                        geometry.description = DVC.Attribute("B").Value;
+                    else
+                        geometry.description = DVC.Attribute("A").Value;
+
+                    geometry.description += "/ " + DET.Single().Attribute("D").Value;
+                }
+
+                Console.WriteLine("Geometry: " + geometry.description);
+                Console.WriteLine("DeviceElement: " + geometry.element);
+                Console.WriteLine("Connection type: " + geometry.connection.ToString());
+                Console.WriteLine("TractorCRP: " + printGeometryOffsetDescription(geometry.TractorCRP));
+                Console.WriteLine("TractorNRP: " + printGeometryOffsetDescription(geometry.TractorNRP));
+                Console.WriteLine("ImplementCRP: " + printGeometryOffsetDescription(geometry.ImplementCRP));
+                Console.WriteLine("ImplementERP: " + printGeometryOffsetDescription(geometry.ImplementERP));
+            }
+
+            return retvalue;
+        }
+
+        bool extractTimelog(XElement TLG, string directory)
+        {
+            // read header
+            string header_file = directory + TLG.Attribute("A").Value + ".xml";
+
+            XDocument TLGFile;
+            try
+            {
+                TLGFile = XDocument.Load(header_file);
+            }
+            catch (System.IO.FileNotFoundException e)
+            {
+                Console.WriteLine(e.Message);
+                return false;
+            }
+
+            if (TLGFile.Element("TIM").Attribute("A").Value == "")
+            {
+                TLGdata.datalogheader.Add(new LogElementType<System.String>("TimeStartTOFD"));
+                TLGdata.datalogheader.Add(new LogElementType<System.String>("TimeStartDATE"));
+            }
+            // Attribute B and C are not valid for TIM in TLG
+
+
+            foreach (var PTN in TLGFile.Element("TIM").Descendants("PTN"))
+            {
+                if (PTN.Attribute("A") != null && PTN.Attribute("A").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionNorth"));
+                if (PTN.Attribute("B") != null && PTN.Attribute("B").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionEast"));
+                if (PTN.Attribute("C") != null && PTN.Attribute("C").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionUp"));
+                if (PTN.Attribute("D") != null && PTN.Attribute("D").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.Byte>("PositionStatus"));
+                if (PTN.Attribute("E") != null && PTN.Attribute("E").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.UInt16>("PDOP"));
+                if (PTN.Attribute("F") != null && PTN.Attribute("F").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.UInt16>("HDOP"));
+                if (PTN.Attribute("G") != null && PTN.Attribute("G").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.Byte>("NumberOfSatellites"));
+                if (PTN.Attribute("H") != null && PTN.Attribute("H").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.String>("GpsUtcTime"));
+                if (PTN.Attribute("I") != null && PTN.Attribute("I").Value == "")
+                    TLGdata.datalogheader.Add(new LogElementType<System.String>("GpsUtcDate"));
+            }
+
+
+            foreach (var DLV in TLGFile.Element("TIM").Descendants("DLV"))
+            {
+                string ProcessDataDDI = DLV.Attribute("A").Value;
+                string DeviceElementIdRef = DLV.Attribute("C").Value;
+
+                var DET = TLG.Ancestors().Descendants("DET").Where(det => det.Attribute("A").Value == DeviceElementIdRef).Single();
+
+                LogElementType<System.Int32> logelement;
+
+                try
+                {
+                    var DOR = DET.Descendants("DOR").Attributes("A").Select(atr => atr.Value).ToList();
+                    var DPD = DET.Parent.Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && dpd.Attribute("B").Value == ProcessDataDDI).Single();
+
+                    string DVCdesignator = DET.Parent.Attribute("B").Value;  // Note! optional attribute
+                    string DETdesignator = DET.Attribute("D").Value; // Note! optional attribute
+                    string DPDdesignator = DPD.Attribute("E").Value; // Note! optional attribute --> Use DDI description instead
+
+                    logelement = new LogElementType<System.Int32>(DVCdesignator + "_" + DETdesignator + "_" + DPDdesignator) { DPD = new DPD_Reference(DeviceElementIdRef, ProcessDataDDI) };
+                    try
+                    {
+                        logelement.values.Add(System.Int32.Parse(DLV.Attribute("B").Value));
+                    }
+                    catch (System.FormatException)
+                    {
+                        logelement.values.Add(0);
+                    }
+                    TLGdata.datalogdata.Add(logelement);
+                }
+                catch (System.InvalidOperationException)
+                {
+                    Console.WriteLine("Process data description not found!");
+
+                    logelement = new LogElementType<System.Int32>(DeviceElementIdRef + "_" + ProcessDataDDI) { DPD = new DPD_Reference(DeviceElementIdRef, ProcessDataDDI) };
+                    try
+                    {
+                        logelement.values.Add(System.Int32.Parse(DLV.Attribute("B").Value));
+                    }
+                    catch (System.FormatException)
+                    {
+                        logelement.values.Add(0);
+                    }
+                    TLGdata.datalogdata.Add(logelement);
+                }
+
+                // Find the geometry information for current logelement
+
+                var DVC_DET_list = DET.Ancestors("DVC").Descendants("DET");
+                var DET_geometry = DET;
+                var geometry = TLGdata.geometry.Where(geo => geo.element == DET_geometry.Attribute("A").Value);
+
+                while (!geometry.Any() && DET_geometry.Attribute("B").Value != "0")
+                {
+                    DET_geometry = DVC_DET_list.Where(det => det.Attribute("B").Value == DET_geometry.Attribute("F").Value).Single();
+                    geometry = TLGdata.geometry.Where(geo => geo.element == DET_geometry.Attribute("A").Value);
+                }
+
+                if (geometry.Any())
+                    geometry.Single().datalogdata.Add(logelement);
+                else
+                    TLGdata.geometry.Where(geo => geo.element == "original").Single().datalogdata.Add(logelement);
+            }
+
+
+
+            Console.WriteLine(TLG.Attribute("A").Value);
+            Console.WriteLine("******* Header: **********");
+            foreach (var element in TLGdata.datalogheader)
+            {
+                Console.WriteLine(element.name);
+            }
+            Console.WriteLine("******* Data: **********");
+            foreach (var geometry in TLGdata.geometry)
+            {
+                if (geometry.datalogdata.Any())
+                {
+                    Console.WriteLine("Data measured in geometry position: " + geometry.description);
+
+                    foreach (var element in geometry.datalogdata)
+                    {
+                        Console.WriteLine(element.name);
+                    }
+                    Console.WriteLine("----------------------------------------------");
+                }
+            }
+            Console.WriteLine("==============================================");
+
+            // ready binary
+            string binary_file = directory + TLG.Attribute("A").Value + ".bin";
+
+            BinaryReader reader = new BinaryReader(new FileStream(binary_file, FileMode.Open));
+            List<LogElement>.Enumerator header = TLGdata.datalogheader.GetEnumerator();
+
+            while (reader.BaseStream.Position < reader.BaseStream.Length)
+            {
+                if (!header.MoveNext())
+                {
+                    header = TLGdata.datalogheader.GetEnumerator();
+                    if (!header.MoveNext())
+                    {
+                        Console.WriteLine("NO HEADER FOR DATA");
+                        return false;
+                    }
+
+
+                    System.Int32[] lastdata = new System.Int32[TLGdata.datalogdata.Count];
+                    for (int i = 0; i < TLGdata.datalogdata.Count; i++)
+                        lastdata[i] = ((LogElementType<System.Int32>)TLGdata.datalogdata.ElementAt(i)).values.Last();
+
+
+                    System.Byte DLVs = reader.ReadByte();
+                    for (int n = 0; n < DLVs; n++)
+                    {
+                        System.Byte DLVn = reader.ReadByte();
+                        lastdata[DLVn] = reader.ReadInt32();
+                    }
+
+                    for (int i = 0; i < TLGdata.datalogdata.Count; i++)
+                        ((LogElementType<System.Int32>)TLGdata.datalogdata.ElementAt(i)).values.Add(lastdata[i]);
+
+                    if (reader.BaseStream.Position >= reader.BaseStream.Length)
+                        break;
+                }
+
+                if (header.Current.name == "TimeStartDATE" || header.Current.name == "GpsUtcDate")
+                {
+                    LogElementType<System.String> element = (LogElementType<System.String>)header.Current;
+                    DateTime date = new DateTime(1980, 1, 1);
+                    date = date.AddDays(reader.ReadUInt16());
+                    element.values.Add(date.ToShortDateString());
+                }
+                else if (header.Current.name == "TimeStartTOFD" || header.Current.name == "GpsUtcTime")
+                {
+                    LogElementType<System.String> element = (LogElementType<System.String>)header.Current;
+                    DateTime date = new DateTime();
+                    date = date.AddMilliseconds(reader.ReadUInt32());
+                    element.values.Add(date.TimeOfDay.ToString());
+                }
+                else if (header.Current.type == typeof(System.Byte))
+                {
+                    LogElementType<System.Byte> element = (LogElementType<System.Byte>)header.Current;
+                    element.values.Add(reader.ReadByte());
+                }
+                else if (header.Current.type == typeof(System.Int16))
+                {
+                    LogElementType<System.Int16> element = (LogElementType<System.Int16>)header.Current;
+                    element.values.Add(reader.ReadInt16());
+                }
+                else if (header.Current.type == typeof(System.Int32))
+                {
+                    LogElementType<System.Int32> element = (LogElementType<System.Int32>)header.Current;
+                    element.values.Add(reader.ReadInt32());
+                }
+                else if (header.Current.type == typeof(System.UInt16))
+                {
+                    LogElementType<System.UInt16> element = (LogElementType<System.UInt16>)header.Current;
+                    element.values.Add(reader.ReadUInt16());
+                }
+                else if (header.Current.type == typeof(System.UInt32))
+                {
+                    LogElementType<System.UInt32> element = (LogElementType<System.UInt32>)header.Current;
+                    element.values.Add(reader.ReadUInt32());
+                }
+                else if (header.Current.type == typeof(System.UInt64))
+                {
+                    LogElementType<System.UInt64> element = (LogElementType<System.UInt64>)header.Current;
+                    element.values.Add(reader.ReadUInt64());
+                }
+            }
+
+            foreach (var element in TLGdata.datalogdata)
+            {
+                LogElementType<System.Int32> data = (LogElementType<System.Int32>)element;
+                data.values.RemoveAt(0);
+            }
+
+            return true;
+        }
+        
+        bool convertTaskFile(String filename)
+        {
+            bool retvalue = true;
+
             // Read main file and linked xml files
-         
+
             XDocument ISOTaskFile;
             try
             {
@@ -349,9 +731,8 @@ namespace ISO_GML_Converter
 
             ISOTaskFile.Root.Descendants("XFR").Remove();
 
-            
-            // Read binary timelog files 
-
+                        
+            // extract TASK information
             foreach(var TSK in ISOTaskFile.Root.Descendants("TSK"))
             {
                 TLGdata.taskname = TSK.Attribute("B").Value;
@@ -361,275 +742,85 @@ namespace ISO_GML_Converter
                 List<string> devicelist = TSK.Elements("DAN").Attributes("C").Select(attr => attr.Value).ToList();
                 TLGdata.devices = ISOTaskFile.Root.Descendants("DVC").Where(dvc => devicelist.Contains(dvc.Attribute("A").Value)).Attributes("B").Select(attr => attr.Value).ToList();
 
+                // extract geometry information
+                retvalue = extractGeometryInformation(TSK) && retvalue;
 
-                foreach (var CNN in TSK.Elements("CNN"))
-                {
-                    var DVC_0 = ISOTaskFile.Root.Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("A").Value).Single();
-                    Point CRP_0 = extractGeometryOffset(DVC_0.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("B").Value).Single());
-
-                    Point NRP_0 = extractGeometryOffset(DVC_0.Descendants("DET").Where(det => det.Attribute("C").Value == "7").Single());
-
-                    var DVC_1 = ISOTaskFile.Root.Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("C").Value).Single();
-                    Point CRP_1 = extractGeometryOffset(DVC_1.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("D").Value).Single());
-                                        
-                    
-                    foreach(var ERP in DVC_1.Descendants("DET").Where(det => hasGeometryOffset(det)))
-                    {
-                        // assumption: 0=tractor, 1=implement
-                        // TODO: connector type (0=unknown is default)
-
-                        TLGdata.geometry.Add(new TractorImplementGeometry() { TractorCRP = CRP_0, TractorNRP = NRP_0, ImplementCRP = CRP_1, ImplementERP = extractGeometryOffset(ERP), element = ERP.Attribute("A").Value });
-                    }
-                }
-
-                Console.WriteLine("******* Geometry: **********");
-                foreach(var geometry in TLGdata.geometry)
-                {
-                    Console.WriteLine("DeviceElement: " + geometry.element);
-                    Console.WriteLine("TractorCRP: " + printGeometryOffsetDescription(geometry.TractorCRP));
-                    Console.WriteLine("TractorNRP: " + printGeometryOffsetDescription(geometry.TractorNRP));
-                    Console.WriteLine("ImplementCRP: " + printGeometryOffsetDescription(geometry.ImplementCRP));
-                    Console.WriteLine("ImplementERP: " + printGeometryOffsetDescription(geometry.ImplementERP));
-                }
-                    
 
                 foreach (var TLG in TSK.Descendants("TLG"))
                 {
-                    // read header
-                    string header_file = directory + TLG.Attribute("A").Value + ".xml";
-                    
-                    XDocument TLGFile;
-                    try
+                    // extract timelog  
+                    if (!extractTimelog(TLG, directory))
                     {
-                        TLGFile = XDocument.Load(header_file);
-                    }
-                    catch (System.IO.FileNotFoundException e)
-                    {
-                        Console.WriteLine(e.Message);
-                        return false;
-                    }
+                        retvalue = false;
 
-                    if (TLGFile.Element("TIM").Attribute("A").Value == "")
-                    {
-                        TLGdata.datalogheader.Add(new LogElementType<System.String>("TimeStartTOFD"));
-                        TLGdata.datalogheader.Add(new LogElementType<System.String>("TimeStartDATE"));
-                    }
-                    // Attribute B and C are not valid for TIM in TLG
+                        // clear current TLG data
+                        TLGdata.datalogheader.Clear();
+                        TLGdata.datalogdata.Clear();
 
+                        foreach (var geometry in TLGdata.geometry)
+                            geometry.datalogdata.Clear();
 
-                    foreach(var PTN in TLGFile.Element("TIM").Descendants("PTN"))
-                    {
-                        if(PTN.Attribute("A") != null && PTN.Attribute("A").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionNorth"));
-                        if(PTN.Attribute("B") != null && PTN.Attribute("B").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionEast"));
-                        if (PTN.Attribute("C") != null && PTN.Attribute("C").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionUp"));
-                        if(PTN.Attribute("D") != null && PTN.Attribute("D").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.Byte>("PositionStatus"));
-                        if(PTN.Attribute("E") != null && PTN.Attribute("E").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.UInt16>("PDOP"));
-                        if(PTN.Attribute("F") != null && PTN.Attribute("F").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.UInt16>("HDOP"));
-                        if(PTN.Attribute("G") != null && PTN.Attribute("G").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.Byte>("NumberOfSatellites"));
-                        if(PTN.Attribute("H") != null && PTN.Attribute("H").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.String>("GpsUtcTime"));
-                        if(PTN.Attribute("I") != null && PTN.Attribute("I").Value == "")
-                            TLGdata.datalogheader.Add(new LogElementType<System.String>("GpsUtcDate"));
+                        continue;
                     }
 
-                   
-                    foreach (var DLV in TLGFile.Element("TIM").Descendants("DLV"))
-                    {
-                        string ProcessDataDDI = DLV.Attribute("A").Value;
-                        string DeviceElementIdRef = DLV.Attribute("C").Value;
 
-                        var DET = ISOTaskFile.Root.Descendants("DET").Where(det => det.Attribute("A").Value == DeviceElementIdRef).Single();
-                        try
+                    // simulate geometry
+
+                    // TODO!
+
+                    //TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionNorth"));
+                    //TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionEast"));
+
+
+                    // write data out
+
+                    foreach (var geometry in TLGdata.geometry)
+                    {
+                        if (geometry.datalogdata.Any())
                         {
-                            var DOR = DET.Descendants("DOR").Attributes("A").Select(atr => atr.Value).ToList();
-                            var DPD = ISOTaskFile.Root.Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && dpd.Attribute("B").Value == ProcessDataDDI).Single();
-
-                            string DVCdesignator = DET.Parent.Attribute("B").Value;  // Note! optional attribute
-                            string DETdesignator = DET.Attribute("D").Value; // Note! optional attribute
-                            string DPDdesignator = DPD.Attribute("E").Value; // Note! optional attribute --> Use DDI description instead
-
-                            LogElementType<System.Int32> logelement = new LogElementType<System.Int32>(DVCdesignator + "_" + DETdesignator + "_" + DPDdesignator);
-                            try
+                            if (outputType == OutputType.GML)
                             {
-                                logelement.values.Add(System.Int32.Parse(DLV.Attribute("B").Value));
+                                if (!writeGMLFile(generateName(TLG.Attribute("A").Value + " " + geometry.description) + ".GML", TLGdata.datalogheader, geometry.datalogdata))
+                                {
+                                    Console.WriteLine("ERROR IN WRITING GML");
+                                    retvalue = false;
+                                }
                             }
-                            catch(System.FormatException)
+                            else if (outputType == OutputType.CSV)
                             {
-                                logelement.values.Add(0);
+                                if (!writeCSVFile(generateName(TLG.Attribute("A").Value + " " + geometry.description) + ".CSV", TLGdata.datalogheader, geometry.datalogdata))
+                                {
+                                    Console.WriteLine("ERROR IN WRITING GML");
+                                    retvalue = false;
+                                }
                             }
-                            TLGdata.datalogdata.Add(logelement);                                
-                        }
-                        catch (System.InvalidOperationException)
-                        {
-                            Console.WriteLine("Process data description not found!");
-                            
-                            LogElementType<System.Int32> logelement = new LogElementType<System.Int32>(DeviceElementIdRef + "_" + ProcessDataDDI);
-                            try
-                            {
-                                logelement.values.Add(System.Int32.Parse(DLV.Attribute("B").Value));
-                            }
-                            catch (System.FormatException)
-                            {
-                                logelement.values.Add(0);
-                            }
-                            TLGdata.datalogdata.Add(logelement);                             
-                        }
-
-                        foreach(var geometry in TLGdata.geometry)
-                        {
-                            if(DET.AncestorsAndSelf("DET").Where(det => det.Attribute("A").Value == geometry.element).Any())
-                            {
-                                Console.WriteLine("Element " + DET.Attribute("A").Value + " belongs to geometry ERP=" + geometry.element);
-
-                                // TODO: Create separate list for these elements!
-                            }
-                        } 
-                    }
-
-
-                    Console.WriteLine(TLG.Attribute("A").Value);
-                    Console.WriteLine("******* Header: **********");
-                    foreach (var element in TLGdata.datalogheader)
-                    {
-                        Console.WriteLine(element.name);
-                    }
-                    Console.WriteLine("******* Data: **********");
-                    foreach (var element in TLGdata.datalogdata)
-                    {
-                        Console.WriteLine(element.name);
-                    }
-                    Console.WriteLine("==============================================");
-                                            
-                    // ready binary
-                    string binary_file = directory + TLG.Attribute("A").Value + ".bin";
-
-                    BinaryReader reader = new BinaryReader(new FileStream(binary_file, FileMode.Open));
-                    List<LogElement>.Enumerator header = TLGdata.datalogheader.GetEnumerator();
-                    
-                    while (reader.BaseStream.Position < reader.BaseStream.Length)
-                    {
-                        if (!header.MoveNext())
-                        {
-                            header = TLGdata.datalogheader.GetEnumerator();
-                            if (!header.MoveNext())
-                            {
-                                Console.WriteLine("NO HEADER FOR DATA");
-                                return false;
-                            }
-
-
-                            System.Int32[] lastdata = new System.Int32[TLGdata.datalogdata.Count];
-                            for (int i = 0; i < TLGdata.datalogdata.Count; i++)
-                                lastdata[i] = ((LogElementType<System.Int32>)TLGdata.datalogdata.ElementAt(i)).values.Last();
-
-                            
-                            System.Byte DLVs = reader.ReadByte();
-                            for (int n = 0; n < DLVs; n++)
-                            {
-                                System.Byte DLVn = reader.ReadByte();
-                                lastdata[DLVn] = reader.ReadInt32();
-                            }
-
-                            for (int i = 0; i < TLGdata.datalogdata.Count; i++)
-                                ((LogElementType<System.Int32>)TLGdata.datalogdata.ElementAt(i)).values.Add(lastdata[i]);
-
-                            if (reader.BaseStream.Position >= reader.BaseStream.Length)
-                                break;
-                        }
-
-                        if (header.Current.name == "TimeStartDATE" || header.Current.name == "GpsUtcDate")
-                        {
-                            LogElementType<System.String> element = (LogElementType<System.String>)header.Current;
-                            DateTime date = new DateTime(1980,1,1);
-                            date = date.AddDays(reader.ReadUInt16());
-                            element.values.Add(date.ToShortDateString());
-                        }
-                        else if (header.Current.name == "TimeStartTOFD" || header.Current.name == "GpsUtcTime")
-                        {
-                            LogElementType<System.String> element = (LogElementType<System.String>)header.Current;
-                            DateTime date = new DateTime();
-                            date = date.AddMilliseconds(reader.ReadUInt32());
-                            element.values.Add(date.TimeOfDay.ToString());
-                        }
-                        else if (header.Current.type == typeof(System.Byte))
-                        {
-                            LogElementType<System.Byte> element = (LogElementType<System.Byte>)header.Current;
-                            element.values.Add(reader.ReadByte());
-                        }
-                        else if(header.Current.type == typeof(System.Int16))
-                        {
-                            LogElementType<System.Int16> element = (LogElementType<System.Int16>)header.Current;
-                            element.values.Add(reader.ReadInt16());
-                        }
-                        else if(header.Current.type == typeof(System.Int32))
-                        {
-                            LogElementType<System.Int32> element = (LogElementType<System.Int32>)header.Current;
-                            element.values.Add(reader.ReadInt32());
-                        }
-                        else if(header.Current.type == typeof(System.UInt16))
-                        {
-                            LogElementType<System.UInt16> element = (LogElementType<System.UInt16>)header.Current;
-                            element.values.Add(reader.ReadUInt16());
-                        }
-                        else if(header.Current.type == typeof(System.UInt32))
-                        {
-                            LogElementType<System.UInt32> element = (LogElementType<System.UInt32>)header.Current;
-                            element.values.Add(reader.ReadUInt32());
-                        }
-                        else if(header.Current.type == typeof(System.UInt64))
-                        {
-                            LogElementType<System.UInt64> element = (LogElementType<System.UInt64>)header.Current;
-                            element.values.Add(reader.ReadUInt64());
                         }
                     }
 
-                    foreach (var element in TLGdata.datalogdata)
-                    {
-                        LogElementType<System.Int32> data = (LogElementType<System.Int32>)element;
-                        data.values.RemoveAt(0);
-                    }
 
-                    if (outputType == OutputType.GML)
-                    {
-                        if (!writeGMLFile(generateName() + TLG.Attribute("A").Value + ".GML"))
-                        {
-                            Console.WriteLine("ERROR IN WRITING GML");
-                        }
-                    }
-                    else if (outputType == OutputType.CSV)
-                    {
-                        if (!writeCSVFile(generateName() + TLG.Attribute("A").Value + ".CSV"))
-                        {
-                            Console.WriteLine("ERROR IN WRITING GML");
-                        }
-                    }
-
+                    // clear current TLG data
                     TLGdata.datalogheader.Clear();
                     TLGdata.datalogdata.Clear();
+
+                    foreach (var geometry in TLGdata.geometry)
+                        geometry.datalogdata.Clear();
                 }
             }
 
-            return true;
+            return retvalue;
         }
 
-        bool writeGMLFile(String filename)
+        bool writeGMLFile(String filename, List<LogElement> datalogheader, List<LogElement> datalogdata)
         {
             XNamespace gml = "http://www.opengis.net/gml";
             XNamespace tnt = "http://www.microimages.com/TNT";
 
-            LogElementType<System.Int32> longitude = (LogElementType<System.Int32>)TLGdata.datalogheader.Where(header => header.name == "PositionEast").Single();
-            LogElementType<System.Int32> latitude = (LogElementType<System.Int32>)TLGdata.datalogheader.Where(header => header.name == "PositionNorth").Single();
+            LogElementType<System.Int32> longitude = (LogElementType<System.Int32>)datalogheader.Where(header => header.name == "PositionEast").Single();
+            LogElementType<System.Int32> latitude = (LogElementType<System.Int32>)datalogheader.Where(header => header.name == "PositionNorth").Single();
             LogElementType<System.Int32> height;
             
             // If data is missing height use 0
-            var heightData = TLGdata.datalogheader.Where(header => header.name == "PositionUp").ToList();
+            var heightData = datalogheader.Where(header => header.name == "PositionUp").ToList();
             if (heightData.Count > 0)
             {
                 height = (LogElementType<System.Int32>)heightData.First();
@@ -656,18 +847,18 @@ namespace ISO_GML_Converter
 
             int index = 0;
 
-            while (index < TLGdata.datalogheader.ElementAt(0).getSize())
+            while (index < datalogheader.ElementAt(0).getSize())
             {
                 XElement datapoint = new XElement(tnt + (TLGdata.taskname.Replace("+", "_").Replace(" ", "_").Replace("&", "_") + "_point"));
                 
-                foreach (var header in TLGdata.datalogheader)
+                foreach (var header in datalogheader)
                 {
                     if (header.name != "PositionNorth" && header.name != "PositionEast" && header.name != "PositionUp")
                         datapoint.Add(new XElement(tnt + header.name.Replace(" ", "_"), header.getValueString(index)));
                 }
                     
                 
-                foreach (var element in TLGdata.datalogdata)
+                foreach (var element in datalogdata)
                 {
                     string elName = element.name.Replace(" ", "_").Replace("&", "_").Replace("(", "_").Replace(")", "_");
                     if (Regex.IsMatch(elName, @"^[0-9]"))
@@ -700,18 +891,18 @@ namespace ISO_GML_Converter
 
 
 
-        bool writeCSVFile(String filename)
+        bool writeCSVFile(String filename, List<LogElement> datalogheader, List<LogElement> datalogdata)
         {
             
             StreamWriter file = new StreamWriter(filename);
 
             // Write variable names to the first line
-            foreach (var header in TLGdata.datalogheader)
+            foreach (var header in datalogheader)
             {
                 file.Write(header.name + "; ");
             }
 
-            foreach (var element in TLGdata.datalogdata)
+            foreach (var element in datalogdata)
             {
                 string elName = element.name.Replace(" ", "_").Replace("&", "_").Replace("(", "_").Replace(")", "_");
                 if (Regex.IsMatch(elName, @"^[0-9]"))
@@ -724,16 +915,16 @@ namespace ISO_GML_Converter
 
             // Write values
             int index = 0;
-            while (index < TLGdata.datalogheader.ElementAt(0).getSize())
+            while (index < datalogheader.ElementAt(0).getSize())
             {
 
-                foreach (var header in TLGdata.datalogheader)
+                foreach (var header in datalogheader)
                 {
                     file.Write(header.getValueString(index) + "; ");
                 }
 
 
-                foreach (var element in TLGdata.datalogdata)
+                foreach (var element in datalogdata)
                 {
                     file.Write(element.getValueString(index) + "; ");
                 }
