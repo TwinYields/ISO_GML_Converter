@@ -106,7 +106,7 @@ namespace ISO_GML_Converter
         public enum ConnectionType
         {
             Mounted,
-            Hitched
+            Towed
         }
         public ConnectionType connection;
 
@@ -120,6 +120,9 @@ namespace ISO_GML_Converter
         public Point ImplementDRP;  // DeficeReferencePoint
         public Point ImplementCRP;  // ConnectorReferencePoint
         public Point ImplementERP;  // DeviceElementReferencePoint
+
+        public DPD_Reference yaw;                  // tractor yaw angle
+        public DPD_Reference connectionangle;      // angle between the tractor and the implement
 
 
         public List<LogElement> datalogdata = new List<LogElement>();
@@ -322,8 +325,7 @@ namespace ISO_GML_Converter
             bool retvalue = true;
 
             // TODO: read True Rotation Point; DDI=306 and 304 (Does anyone use it?)
-            // TODO: read Actual relative connection angle; DDI=466 
-            // TODO: read Yaw Angle: DDI=144
+            // TODO: read Actual relative connection angle; DDI=466  (Does anyone use it?)
 
             try
             {
@@ -358,26 +360,38 @@ namespace ISO_GML_Converter
 
                     Point NRP_0 = extractGeometryOffset(NRP.Single());
 
+
+                    DPD_Reference YAW_reference = null;
+                    var YAW_DPD = DVC_0.Descendants("DPD").Where(dpd => Convert.ToInt32(dpd.Attribute("B").Value, 16) == 144);
+                    if(YAW_DPD.Any())
+                    {
+                        var DET = DVC_0.Descendants("DOR").Where(dor => dor.Attribute("A").Value == YAW_DPD.Single().Attribute("A").Value).First().Parent;
+                        YAW_reference = new DPD_Reference(DET.Attribute("A").Value, YAW_DPD.Single().Attribute("B").Value);
+                    }
+
+
                     var DRP_1 = DVC_1.Descendants("DET").Where(det => det.Attribute("F").Value == "0").Single();
                     TLGdata.geometry.Add(new TractorImplementGeometry()
                     {
-                        connection = TractorImplementGeometry.ConnectionType.Hitched,
+                        connection = TractorImplementGeometry.ConnectionType.Towed,
                         TractorCRP = CRP_0,
                         TractorNRP = NRP_0,
                         ImplementCRP = CRP_1,
                         ImplementERP = new Point(),
-                        element = DRP_1.Attribute("A").Value
+                        yaw = YAW_reference,
+                        element = DRP_1.Attribute("A").Value                       
                     });
 
                     foreach (var ERP in DVC_1.Descendants("DET").Where(det => hasGeometryOffset(det)))
                     {
                         TLGdata.geometry.Add(new TractorImplementGeometry()
                         {
-                            connection = TractorImplementGeometry.ConnectionType.Hitched,
+                            connection = TractorImplementGeometry.ConnectionType.Towed,
                             TractorCRP = CRP_0,
                             TractorNRP = NRP_0,
                             ImplementCRP = CRP_1,
                             ImplementERP = extractGeometryOffset(ERP),
+                            yaw = YAW_reference,
                             element = ERP.Attribute("A").Value
                         });
                     }
@@ -393,6 +407,14 @@ namespace ISO_GML_Converter
                     {
                         Point NRP_0 = extractGeometryOffset(NRP);
 
+                        DPD_Reference YAW_reference = null;
+                        var YAW_DPD = DVC_0.Descendants("DPD").Where(dpd => Convert.ToInt32(dpd.Attribute("B").Value, 16) == 144);
+                        if (YAW_DPD.Any())
+                        {
+                            var DET = DVC_0.Descendants("DOR").Where(dor => dor.Attribute("A").Value == YAW_DPD.Single().Attribute("A").Value).First().Parent;
+                            YAW_reference = new DPD_Reference(DET.Attribute("A").Value, YAW_DPD.Single().Attribute("B").Value);
+                        }
+
                         TLGdata.geometry.Add(new TractorImplementGeometry()
                         {
                             connection = TractorImplementGeometry.ConnectionType.Mounted,
@@ -400,6 +422,7 @@ namespace ISO_GML_Converter
                             TractorNRP = NRP_0,
                             ImplementCRP = new Point(),
                             ImplementERP = new Point(),
+                            yaw = YAW_reference,
                             element = DRP_0.Attribute("A").Value
                         });
 
@@ -412,6 +435,7 @@ namespace ISO_GML_Converter
                                 TractorNRP = NRP_0,
                                 ImplementCRP = new Point(),
                                 ImplementERP = extractGeometryOffset(ERP),
+                                yaw = YAW_reference,
                                 element = ERP.Attribute("A").Value
                             });
                         }
@@ -459,6 +483,11 @@ namespace ISO_GML_Converter
                 Console.WriteLine("TractorNRP: " + printGeometryOffsetDescription(geometry.TractorNRP));
                 Console.WriteLine("ImplementCRP: " + printGeometryOffsetDescription(geometry.ImplementCRP));
                 Console.WriteLine("ImplementERP: " + printGeometryOffsetDescription(geometry.ImplementERP));
+
+                if(geometry.yaw != null)
+                    Console.WriteLine("Yaw angle: <" + geometry.yaw.element + " (" + geometry.yaw.DDI + ")>");
+
+                Console.WriteLine("----------------------------------------------");
             }
 
             return retvalue;
@@ -689,7 +718,35 @@ namespace ISO_GML_Converter
 
             return true;
         }
-        
+
+        bool simulateGeometry()
+        {
+            // TODO!
+
+            // Convert WGS-84 coordinates to ENU coordinates
+
+
+            //TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionNorth"));
+            //TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionEast"));
+
+
+            // simulate geometry information
+            foreach (var geometry in TLGdata.geometry)
+            {
+                // simulate yaw angle if there are no measurement
+
+                // simulate angle between tractor and implement
+
+                // calculate ERP position
+
+                // convert ENU coordinates to WGS-84 coordinates 
+
+                // create datalogheader
+            }
+
+            return true;
+        }
+
         bool convertTaskFile(String filename)
         {
             bool retvalue = true;
@@ -765,15 +822,10 @@ namespace ISO_GML_Converter
 
 
                     // simulate geometry
+                    retvalue = simulateGeometry() && retvalue;
 
-                    // TODO!
-
-                    //TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionNorth"));
-                    //TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionEast"));
-
-
+                    
                     // write data out
-
                     foreach (var geometry in TLGdata.geometry)
                     {
                         if (geometry.datalogdata.Any())
