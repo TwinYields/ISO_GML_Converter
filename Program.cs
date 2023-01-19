@@ -32,10 +32,24 @@ using System.Text.RegularExpressions;
 
 namespace ISO_GML_Converter
 {
+    public class DPD_Reference
+    {
+        public string element;
+        public string DDI;
+
+        public DPD_Reference(string ref_element = "", string ref_DDI = "")
+        {
+            element = ref_element;
+            DDI = ref_DDI;
+        }
+    }
+
     public class LogElement
     {
         public string name;
         public Type type;
+
+
 
         public virtual string getValueString(int index)
         {
@@ -51,12 +65,15 @@ namespace ISO_GML_Converter
     public class LogElementType<T> : LogElement
     {
         public List<T> values;
+        public DPD_Reference DPD;
 
-        public LogElementType(string description) 
+        public LogElementType(string description /*, DPD_Reference reference = new PDP*/)
         {
             name = description;
             values = new List<T>();
             type = typeof(T);
+
+            //DPD = reference;
         }
 
         public override string getValueString(int index)
@@ -70,12 +87,44 @@ namespace ISO_GML_Converter
         }
     }
 
+    public class Point
+    {
+        public Int32 x;
+        public Int32 y;
+        public Int32 z;
+
+        public DPD_Reference DPD_x;
+        public DPD_Reference DPD_y;
+        public DPD_Reference DPD_z;
+
+        public Point(Int32 point_x = 0, Int32 point_y = 0, Int32 point_z = 0)
+        {
+            x = point_x;
+            y = point_y;
+            z = point_z;
+        }
+    }
+
+    public class TractorImplementGeometry
+    {
+        public string element;      // reference to DeviceElementReferencePoint
+
+        public Point TractorDRP;    // DeficeReferencePoint
+        public Point TractorNRP;    // NavigationReferencePoint
+        public Point TractorCRP;    // ConnectorReferencePoint
+
+        public Point ImplementDRP;  // DeficeReferencePoint
+        public Point ImplementCRP;  // ConnectorReferencePoint
+        public Point ImplementERP;  // DeviceElementReferencePoint
+    }
+
     public class TimeLogData
     {
         public string taskname;
         public string field;
         public string farm;
         public List<string> devices;
+        public List<TractorImplementGeometry> geometry = new List<TractorImplementGeometry>();
 
         public List<LogElement> datalogheader = new List<LogElement>();
         public List<LogElement> datalogdata = new List<LogElement>();
@@ -171,6 +220,96 @@ namespace ISO_GML_Converter
             return name;
         }
 
+        bool hasGeometryOffset(XElement element)
+        {
+            var DOR = element.Descendants("DOR").Attributes("A").Select(atr => atr.Value).ToList();
+
+            var DPD_offsetX = element.Ancestors("DVC").Single().Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && Convert.ToInt32(dpd.Attribute("B").Value, 16) == 134);
+            if (DPD_offsetX.Any())
+                return true;
+
+            var DPD_offsetY = element.Ancestors("DVC").Single().Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && Convert.ToInt32(dpd.Attribute("B").Value, 16) == 135);
+            if (DPD_offsetY.Any())
+                return true;
+
+            var DPD_offsetZ = element.Ancestors("DVC").Single().Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && Convert.ToInt32(dpd.Attribute("B").Value, 16) == 136);
+            if (DPD_offsetZ.Any())
+                return true;
+
+            var DPT_offsetX = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 134);
+            if (DPT_offsetX.Any())
+                return true;
+
+            var DPT_offsetY = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 135);
+            if (DPT_offsetY.Any())
+                return true;
+
+            var DPT_offsetZ = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 136);
+            if (DPT_offsetZ.Any())
+                return true;
+
+            return false;
+        }
+
+
+        Point extractGeometryOffset(XElement element)
+        {
+            Point point = new Point();
+
+            var DOR = element.Descendants("DOR").Attributes("A").Select(atr => atr.Value).ToList();
+
+            var DPD_offsetX = element.Ancestors("DVC").Single().Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && Convert.ToInt32(dpd.Attribute("B").Value, 16) == 134);
+            if (DPD_offsetX.Any())
+                point.DPD_x = new DPD_Reference(element.Attribute("A").Value, DPD_offsetX.Single().Attribute("B").Value);
+
+            var DPD_offsetY = element.Ancestors("DVC").Single().Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && Convert.ToInt32(dpd.Attribute("B").Value, 16) == 135);
+            if (DPD_offsetY.Any())
+                point.DPD_y = new DPD_Reference(element.Attribute("A").Value, DPD_offsetY.Single().Attribute("B").Value);
+
+            var DPD_offsetZ = element.Ancestors("DVC").Single().Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && Convert.ToInt32(dpd.Attribute("B").Value, 16) == 136);
+            if (DPD_offsetZ.Any())
+                point.DPD_z = new DPD_Reference(element.Attribute("A").Value, DPD_offsetZ.Single().Attribute("B").Value);
+
+            var DPT_offsetX = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 134);
+            if (DPT_offsetX.Any())
+                point.x = Int32.Parse(DPT_offsetX.Single().Attribute("C").Value);
+            
+            var DPT_offsetY = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 135);
+            if (DPT_offsetY.Any())
+                point.y = Int32.Parse(DPT_offsetY.Single().Attribute("C").Value);
+
+            var DPT_offsetZ = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 136);
+            if (DPT_offsetZ.Any())
+                point.z = Int32.Parse(DPT_offsetZ.Single().Attribute("C").Value);
+
+            return point;
+        }
+
+        string printGeometryOffsetDescription(Point point)
+        {
+            string output = "";
+
+            output += "x: ";
+            if (point.DPD_x != null )
+                output += "<" + point.DPD_x.element + " (" + point.DPD_x.DDI + ")>";
+            else
+                output += point.x;
+
+            output += " y: ";
+            if (point.DPD_y != null)
+                output += "<" + point.DPD_y.element + " (" + point.DPD_y.DDI + ")>";
+            else
+                output += point.y;
+
+            output += " z: ";
+            if (point.DPD_z != null)
+                output += "<" + point.DPD_z.element + " (" + point.DPD_z.DDI + ")>";
+            else
+                output += point.z;
+
+            return output;
+        }
+
         bool readTaskFile(String filename)
         {
             // Read main file and linked xml files
@@ -221,8 +360,40 @@ namespace ISO_GML_Converter
                 
                 List<string> devicelist = TSK.Elements("DAN").Attributes("C").Select(attr => attr.Value).ToList();
                 TLGdata.devices = ISOTaskFile.Root.Descendants("DVC").Where(dvc => devicelist.Contains(dvc.Attribute("A").Value)).Attributes("B").Select(attr => attr.Value).ToList();
-                
-                foreach(var TLG in TSK.Descendants("TLG"))
+
+
+                foreach (var CNN in TSK.Elements("CNN"))
+                {
+                    var DVC_0 = ISOTaskFile.Root.Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("A").Value).Single();
+                    Point CRP_0 = extractGeometryOffset(DVC_0.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("B").Value).Single());
+
+                    Point NRP_0 = extractGeometryOffset(DVC_0.Descendants("DET").Where(det => det.Attribute("C").Value == "7").Single());
+
+                    var DVC_1 = ISOTaskFile.Root.Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("C").Value).Single();
+                    Point CRP_1 = extractGeometryOffset(DVC_1.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("D").Value).Single());
+                                        
+                    
+                    foreach(var ERP in DVC_1.Descendants("DET").Where(det => hasGeometryOffset(det)))
+                    {
+                        // assumption: 0=tractor, 1=implement
+                        // TODO: connector type (0=unknown is default)
+
+                        TLGdata.geometry.Add(new TractorImplementGeometry() { TractorCRP = CRP_0, TractorNRP = NRP_0, ImplementCRP = CRP_1, ImplementERP = extractGeometryOffset(ERP), element = ERP.Attribute("A").Value });
+                    }
+                }
+
+                Console.WriteLine("******* Geometry: **********");
+                foreach(var geometry in TLGdata.geometry)
+                {
+                    Console.WriteLine("DeviceElement: " + geometry.element);
+                    Console.WriteLine("TractorCRP: " + printGeometryOffsetDescription(geometry.TractorCRP));
+                    Console.WriteLine("TractorNRP: " + printGeometryOffsetDescription(geometry.TractorNRP));
+                    Console.WriteLine("ImplementCRP: " + printGeometryOffsetDescription(geometry.ImplementCRP));
+                    Console.WriteLine("ImplementERP: " + printGeometryOffsetDescription(geometry.ImplementERP));
+                }
+                    
+
+                foreach (var TLG in TSK.Descendants("TLG"))
                 {
                     // read header
                     string header_file = directory + TLG.Attribute("A").Value + ".xml";
@@ -310,6 +481,16 @@ namespace ISO_GML_Converter
                             }
                             TLGdata.datalogdata.Add(logelement);                             
                         }
+
+                        foreach(var geometry in TLGdata.geometry)
+                        {
+                            if(DET.AncestorsAndSelf("DET").Where(det => det.Attribute("A").Value == geometry.element).Any())
+                            {
+                                Console.WriteLine("Element " + DET.Attribute("A").Value + " belongs to geometry ERP=" + geometry.element);
+
+                                // TODO: Create separate list for these elements!
+                            }
+                        } 
                     }
 
 
