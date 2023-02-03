@@ -42,6 +42,12 @@ namespace ISO_GML_Converter
             element = ref_element;
             DDI = ref_DDI;
         }
+
+        public DPD_Reference(DPD_Reference DPD)
+        {
+            element = DPD.element;
+            DDI = DPD.DDI;
+        }
     }
 
     public class LogElement
@@ -85,19 +91,74 @@ namespace ISO_GML_Converter
 
     public class Point
     {
-        public Int32 x;
-        public Int32 y;
-        public Int32 z;
+        public double x;
+        public double y;
+        public double z;
 
-        public DPD_Reference DPD_x;
-        public DPD_Reference DPD_y;
-        public DPD_Reference DPD_z;
+        public DPD_Reference DPD_x = null;
+        public DPD_Reference DPD_y = null;
+        public DPD_Reference DPD_z = null;
 
-        public Point(Int32 point_x = 0, Int32 point_y = 0, Int32 point_z = 0)
+        public Point(double point_x = 0, double point_y = 0, double point_z = 0)
         {
             x = point_x;
             y = point_y;
             z = point_z;
+        }
+
+        public Point(Point p)
+        {
+            x = p.x;
+            y = p.y;
+            z = p.z;
+            DPD_x = p.DPD_x;
+            DPD_y = p.DPD_y;
+            DPD_z = p.DPD_z;
+        }
+
+        public double DotProduct(Point p)
+        {
+            return x * p.x + y * p.y + z * p.z;
+        }
+
+        public Point RotateZ(double angle)
+        {
+            return new Point(Math.Cos(angle) * x - Math.Sin(angle) * y, Math.Sin(angle) * x + Math.Cos(angle) * y);
+        }
+
+        public static Point operator  + (Point p1, Point p2)
+        {
+            return new Point(p1.x + p2.x, p1.y + p2.y, p1.z + p2.z);
+        }
+
+        public static Point operator - (Point p1, Point p2)
+        {
+            return new Point(p1.x - p2.x, p1.y - p2.y, p1.z - p2.z);
+        }
+
+        public override string ToString()
+        {
+            string output = "";
+
+            output += "x: ";
+            if (DPD_x != null)
+                output += "<" + DPD_x.element + " (" + DPD_x.DDI + ")>";
+            else
+                output += x;
+
+            output += " y: ";
+            if (DPD_y != null)
+                output += "<" + DPD_y.element + " (" + DPD_y.DDI + ")>";
+            else
+                output += y;
+
+            output += " z: ";
+            if (DPD_z != null)
+                output += "<" + DPD_z.element + " (" + DPD_z.DDI + ")>";
+            else
+                output += z;
+
+            return output;
         }
     }
 
@@ -125,7 +186,53 @@ namespace ISO_GML_Converter
         public DPD_Reference connectionangle;      // angle between the tractor and the implement
 
 
+        public List<LogElement> datalogheader = new List<LogElement>();
         public List<LogElement> datalogdata = new List<LogElement>();
+
+
+        public Point getValues(Point point, int index)
+        {
+            if (point.DPD_x != null)
+            {
+                var DPD = datalogdata.Where(data => data.DPD.DDI == point.DPD_x.DDI && data.DPD.element == point.DPD_x.element);
+                if(DPD.Count() == 1)
+                {
+                    point.x = (double)((LogElementType<System.Int32>)DPD.Single()).values[index] * 0.001;
+                }
+                else
+                {
+                    // TODO: this should throw exception
+                }
+            }
+
+            if (point.DPD_y != null)
+            {
+                var DPD = datalogdata.Where(data => data.DPD.DDI == point.DPD_y.DDI && data.DPD.element == point.DPD_y.element);
+                if (DPD.Count() == 1)
+                {
+                    point.y = -(double)((LogElementType<System.Int32>)DPD.Single()).values[index] * 0.001;
+                }
+                else
+                {
+                    // TODO: this should throw exception
+                }
+            }
+
+            if (point.DPD_z != null)
+            {
+                var DPD = datalogdata.Where(data => data.DPD.DDI == point.DPD_z.DDI && data.DPD.element == point.DPD_z.element);
+                if (DPD.Count() == 1)
+                {
+                    point.z = -(double)((LogElementType<System.Int32>)DPD.Single()).values[index] * 0.001;
+                }
+                else
+                {
+                    // TODO: this should throw exception
+                }
+            }
+
+            return point;
+        }
     }
 
     public class TimeLogData
@@ -282,42 +389,23 @@ namespace ISO_GML_Converter
 
             var DPT_offsetX = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 134);
             if (DPT_offsetX.Any())
-                point.x = Int32.Parse(DPT_offsetX.Single().Attribute("C").Value);
+                point.x = (double)Int32.Parse(DPT_offsetX.Single().Attribute("C").Value) * 0.001;
             
             var DPT_offsetY = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 135);
             if (DPT_offsetY.Any())
-                point.y = Int32.Parse(DPT_offsetY.Single().Attribute("C").Value);
+                point.y = -(double)Int32.Parse(DPT_offsetY.Single().Attribute("C").Value) * 0.001;
 
             var DPT_offsetZ = element.Ancestors("DVC").Single().Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 136);
             if (DPT_offsetZ.Any())
-                point.z = Int32.Parse(DPT_offsetZ.Single().Attribute("C").Value);
+                point.z = -(double)Int32.Parse(DPT_offsetZ.Single().Attribute("C").Value) * 0.001;
+
+            // Note: ISO 11783-10 defines coordinates:
+            //  positive x: driving direction
+            //  positive y: to the right relative to the driving direction
+            //  positive z: down
+            // In here we are using ENU coordinates (x: East, y: Noth, z: Up)
 
             return point;
-        }
-
-        string printGeometryOffsetDescription(Point point)
-        {
-            string output = "";
-
-            output += "x: ";
-            if (point.DPD_x != null )
-                output += "<" + point.DPD_x.element + " (" + point.DPD_x.DDI + ")>";
-            else
-                output += point.x;
-
-            output += " y: ";
-            if (point.DPD_y != null)
-                output += "<" + point.DPD_y.element + " (" + point.DPD_y.DDI + ")>";
-            else
-                output += point.y;
-
-            output += " z: ";
-            if (point.DPD_z != null)
-                output += "<" + point.DPD_z.element + " (" + point.DPD_z.DDI + ")>";
-            else
-                output += point.z;
-
-            return output;
         }
 
         bool extractGeometryInformation(XElement TSK)
@@ -478,11 +566,11 @@ namespace ISO_GML_Converter
 
                 Console.WriteLine("Geometry: " + geometry.description);
                 Console.WriteLine("DeviceElement: " + geometry.element);
-                Console.WriteLine("Connection type: " + geometry.connection.ToString());
-                Console.WriteLine("TractorCRP: " + printGeometryOffsetDescription(geometry.TractorCRP));
-                Console.WriteLine("TractorNRP: " + printGeometryOffsetDescription(geometry.TractorNRP));
-                Console.WriteLine("ImplementCRP: " + printGeometryOffsetDescription(geometry.ImplementCRP));
-                Console.WriteLine("ImplementERP: " + printGeometryOffsetDescription(geometry.ImplementERP));
+                Console.WriteLine("Connection type: " + geometry.connection);
+                Console.WriteLine("TractorCRP: " + geometry.TractorCRP);
+                Console.WriteLine("TractorNRP: " + geometry.TractorNRP);
+                Console.WriteLine("ImplementCRP: " + geometry.ImplementCRP);
+                Console.WriteLine("ImplementERP: " + geometry.ImplementERP);
 
                 if(geometry.yaw != null)
                     Console.WriteLine("Yaw angle: <" + geometry.yaw.element + " (" + geometry.yaw.DDI + ")>");
@@ -515,7 +603,6 @@ namespace ISO_GML_Converter
                 TLGdata.datalogheader.Add(new LogElementType<System.String>("TimeStartDATE"));
             }
             // Attribute B and C are not valid for TIM in TLG
-
 
             foreach (var PTN in TLGFile.Element("TIM").Descendants("PTN"))
             {
@@ -586,14 +673,17 @@ namespace ISO_GML_Converter
                 }
 
                 // Find the geometry information for current logelement
-
                 var DVC_DET_list = DET.Ancestors("DVC").Descendants("DET");
                 var DET_geometry = DET;
                 var geometry = TLGdata.geometry.Where(geo => geo.element == DET_geometry.Attribute("A").Value);
 
                 while (!geometry.Any() && DET_geometry.Attribute("B").Value != "0")
                 {
-                    DET_geometry = DVC_DET_list.Where(det => det.Attribute("B").Value == DET_geometry.Attribute("F").Value).Single();
+                    var parent = DVC_DET_list.Where(det => det.Attribute("B").Value == DET_geometry.Attribute("F").Value);
+                    if (parent.Count() == 1)
+                        DET_geometry = parent.Single();
+                    else
+                        break;
                     geometry = TLGdata.geometry.Where(geo => geo.element == DET_geometry.Attribute("A").Value);
                 }
 
@@ -627,8 +717,12 @@ namespace ISO_GML_Converter
             }
             Console.WriteLine("==============================================");
 
+
             // ready binary
             string binary_file = directory + TLG.Attribute("A").Value + ".bin";
+
+            Console.WriteLine("**  Read binary file  **");
+            Console.WriteLine(binary_file);
 
             BinaryReader reader = new BinaryReader(new FileStream(binary_file, FileMode.Open));
             List<LogElement>.Enumerator header = TLGdata.datalogheader.GetEnumerator();
@@ -719,29 +813,215 @@ namespace ISO_GML_Converter
             return true;
         }
 
+        // Return difference betweeen angle1 and angle2 wrapped on interval [-pi, pi]
+        static double angleDiff(double angle1, double angle2)
+        {
+            double angle = angle1 - angle2;
+
+            while (angle > Math.PI)
+                angle -= 2*Math.PI;
+
+            while (angle < -Math.PI)
+                angle += 2*Math.PI;
+
+            return angle;
+        }
+
         bool simulateGeometry()
         {
-            // TODO!
-
             // Convert WGS-84 coordinates to ENU coordinates
+            List<System.Int32> latitude = ((LogElementType<System.Int32>)TLGdata.datalogheader.Where(header => header.name == "PositionNorth").Single()).values;
+            List<System.Int32> longitude = ((LogElementType<System.Int32>)TLGdata.datalogheader.Where(header => header.name == "PositionEast").Single()).values;
+            List<System.Int32> height;
+
+            // If data is missing height use 0
+            var heightData = TLGdata.datalogheader.Where(header => header.name == "PositionUp").ToList();
+            if (heightData.Count > 0)
+                height = ((LogElementType<System.Int32>)heightData.First()).values;
+            else
+                height = new List<System.Int32>(new System.Int32[latitude.Count]);
 
 
-            //TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionNorth"));
-            //TLGdata.datalogheader.Add(new LogElementType<System.Int32>("PositionEast"));
+            List<System.Double> xGNSS = new List<System.Double>();
+            List<System.Double> yGNSS = new List<System.Double>();
+            List<System.Double> zGNSS = new List<System.Double>();
+            List<System.Double> yawGNSS = new List<System.Double>();
 
+            double lat0 = latitude[0] * 0.0000001;
+            double lon0 = longitude[0] * 0.0000001;
+            double h0 = height[0] * 0.001;
 
+            xGNSS.Add(0.0);
+            yGNSS.Add(0.0);
+            zGNSS.Add(0.0);
+            yawGNSS.Add(0.0);
+            bool fillFirsts = true;
+            bool reverse = false;
+            int reversecount = 0;
+            int forwardcount = 0;
+
+            double dx = 0;
+            double dy = 0;
+
+            for (int i=1; i<longitude.Count; i++)
+            {
+                GpsUtils.GeodeticToEnu(latitude[i] * 0.0000001, longitude[i] * 0.0000001, height[i] * 0.001,
+                                          lat0, lon0, h0,
+                                          out double x, out double y, out double z);
+
+                xGNSS.Add(x);
+                yGNSS.Add(y);
+                zGNSS.Add(z);
+
+                dx += x - xGNSS[i - 1];
+                dy += y - yGNSS[i - 1];
+
+                // Estimate Yaw if there is no measurement
+                // have to move enough before heading is estimated
+                if ((dx * dx + dy * dy) > 0.01)     // 0.01 --> 0.1m
+                {
+                    yawGNSS.Add(Math.Atan2(dy, dx));
+                    dx = 0;
+                    dy = 0;
+
+                    if (fillFirsts)
+                    {
+                        for (var j = 0; j < i; j++)
+                            yawGNSS[j] = yawGNSS[i];
+                        fillFirsts = false;
+                    }
+                    else
+                    {
+                        if (reverse)
+                        {
+                            yawGNSS[i] += Math.PI;
+                            reversecount++;
+                        }
+                        else
+                            forwardcount++;
+
+                        // yaw is changed to opposite direction? --> tractor is reversing
+                        if (Math.Abs(angleDiff(yawGNSS[i], yawGNSS[i - 1])) > Math.PI / 2)
+                        {
+                            reverse = !reverse;
+                            yawGNSS[i] += Math.PI;
+                        }
+                    }
+                }
+                else
+                {
+                    yawGNSS.Add(yawGNSS[i-1]);
+                }
+            }
+
+            // assume that there is more forward driving that backwards. If not, fix it
+            if (reversecount > forwardcount)
+                yawGNSS = yawGNSS.Select(yaw => yaw + Math.PI).ToList();
+
+            // apply a filter to prevent zigzagging
+            List<System.Double> yawFiltered = new List<double>();
+            yawFiltered.Add(yawGNSS[0]);
+            yawFiltered.Add(yawGNSS[1]);
+            for (int i=2; i< yawGNSS.Count-2; i++)
+            {
+                double angle = 0;
+                for (int j = -2; j < 3; j++)
+                    angle += yawGNSS[i] + angleDiff(yawGNSS[i+j], yawGNSS[i]);
+                yawFiltered.Add(angle / 5);
+            }
+            yawFiltered.Add(yawGNSS[yawGNSS.Count - 2]);
+            yawFiltered.Add(yawGNSS[yawGNSS.Count - 1]);
+            yawGNSS = yawFiltered;
+
+            
             // simulate geometry information
             foreach (var geometry in TLGdata.geometry)
             {
-                // simulate yaw angle if there are no measurement
+                List<System.Double> yaw = yawGNSS;
 
-                // simulate angle between tractor and implement
+                // TODO: There is some bug here. DPD values are not the same as calculated yaw
+                /*
+                if (geometry.yaw != null)
+                {
+                    var YawLog = geometry.datalogdata.Where(data => data.DPD.DDI == geometry.yaw.DDI && data.DPD.element == geometry.yaw.element);
+                    if (YawLog.Any())
+                        yaw = ((LogElementType<System.Int32>)YawLog.First()).values.Select(value => ((double)value) * (Math.PI / 180.0 * 0.001)).ToList();
+                }
+                */
 
-                // calculate ERP position
+                LogElementType<System.Int32> LogLat = new LogElementType<System.Int32>("PositionNorth");
+                LogElementType<System.Int32> LogLon = new LogElementType<System.Int32>("PositionEast");
+                LogElementType<System.Int32> LogUp = new LogElementType<System.Int32>("PositionUp");
 
-                // convert ENU coordinates to WGS-84 coordinates 
+                double implementYaw = yaw[0];
+                Point CRP = null;
+
+                for (int i = 0; i < xGNSS.Count; i++)
+                {
+                    // initial position is NRP that is GNSS antenna position
+                    Point position = new Point(xGNSS[i], yGNSS[i], zGNSS[i]);
+
+                    // calculate the position of the tractor's DRP
+                    position -= geometry.getValues(geometry.TractorNRP, i).RotateZ(yaw[i]);
+
+                    // calculate the position of the tractor's CRP
+                    position += geometry.getValues(geometry.TractorCRP, i).RotateZ(yaw[i]);
+
+                    // simulate the implement angle
+                    switch(geometry.connection)
+                    {
+                        case TractorImplementGeometry.ConnectionType.Mounted:
+                            implementYaw = yaw[i];
+                            break;
+
+                        case TractorImplementGeometry.ConnectionType.Towed:
+
+                            // If distance between DRP and CRP is not positive, it cannot be Towed implement
+                            if (CRP != null && geometry.getValues(geometry.ImplementCRP, i).x > 0)
+                            {
+                                Point speed = position - CRP;
+                                double tangentSpeed = speed.DotProduct(new Point(0, 1).RotateZ(implementYaw));
+                                implementYaw += tangentSpeed / geometry.getValues(geometry.ImplementCRP, i).x; 
+                            }
+                            else
+                            {
+                                implementYaw = yaw[i];
+                            }
+                            CRP = new Point(position);
+
+                            break;
+                    }
+                    
+                    // calculate the postion of the implement's DRP
+                    position -= geometry.getValues(geometry.ImplementCRP, i).RotateZ(implementYaw);
+
+                    // calculate the ERP position
+                    position += geometry.getValues(geometry.ImplementERP, i).RotateZ(implementYaw);
+
+                    // convert ENU coordinates to WGS-84 coordinates 
+                    GpsUtils.EnuToGeodetic(position.x, position.y, position.z,
+                                              lat0, lon0, h0,
+                                              out double lat, out double lon, out double h);
+
+                    LogLat.values.Add((Int32)(lat * 10000000));
+                    LogLon.values.Add((Int32)(lon * 10000000));
+                    LogUp.values.Add((Int32)(h * 1000));
+
+                    /*
+                    LogLat.values.Add((Int32)(position.x * 1000));
+                    LogLon.values.Add((Int32)(position.y * 1000));
+                    LogUp.values.Add((Int32)(position.z * 1000));
+                    */
+                }
 
                 // create datalogheader
+                geometry.datalogheader.Add(LogLat);
+                geometry.datalogheader.Add(LogLon);
+                geometry.datalogheader.Add(LogUp);
+
+                foreach (var header in TLGdata.datalogheader)
+                    if (header.name != "PositionNorth" && header.name != "PositionEast" && header.name != "PositionUp")
+                        geometry.datalogheader.Add(header);
             }
 
             return true;
@@ -815,24 +1095,29 @@ namespace ISO_GML_Converter
                         TLGdata.datalogdata.Clear();
 
                         foreach (var geometry in TLGdata.geometry)
+                        {
+                            geometry.datalogheader.Clear();
                             geometry.datalogdata.Clear();
-
+                        }
+                            
                         continue;
                     }
 
 
                     // simulate geometry
+                    Console.WriteLine("*****  Simulate  *******");
                     retvalue = simulateGeometry() && retvalue;
 
-                    
+
                     // write data out
+                    Console.WriteLine("** Write output files **");
                     foreach (var geometry in TLGdata.geometry)
                     {
                         if (geometry.datalogdata.Any())
                         {
                             if (outputType == OutputType.GML)
                             {
-                                if (!writeGMLFile(generateName(TLG.Attribute("A").Value + " " + geometry.description) + ".GML", TLGdata.datalogheader, geometry.datalogdata))
+                                if (!writeGMLFile(generateName(TLG.Attribute("A").Value + " " + geometry.description) + ".GML", geometry.datalogheader, geometry.datalogdata))
                                 {
                                     Console.WriteLine("ERROR IN WRITING GML");
                                     retvalue = false;
@@ -840,7 +1125,7 @@ namespace ISO_GML_Converter
                             }
                             else if (outputType == OutputType.CSV)
                             {
-                                if (!writeCSVFile(generateName(TLG.Attribute("A").Value + " " + geometry.description) + ".CSV", TLGdata.datalogheader, geometry.datalogdata))
+                                if (!writeCSVFile(generateName(TLG.Attribute("A").Value + " " + geometry.description) + ".CSV", geometry.datalogheader, geometry.datalogdata))
                                 {
                                     Console.WriteLine("ERROR IN WRITING GML");
                                     retvalue = false;
@@ -855,7 +1140,10 @@ namespace ISO_GML_Converter
                     TLGdata.datalogdata.Clear();
 
                     foreach (var geometry in TLGdata.geometry)
+                    {
+                        geometry.datalogheader.Clear();
                         geometry.datalogdata.Clear();
+                    }
                 }
             }
 
