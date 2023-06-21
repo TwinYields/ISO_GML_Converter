@@ -1074,7 +1074,15 @@ namespace ISO_GML_Converter
             {
                 TLGdata.taskname = TSK.Attribute("B").Value;
                 TLGdata.field = ISOTaskFile.Root.Descendants("PFD").Where(pdf => pdf.Attribute("A").Value == TSK.Attribute("E").Value).Single().Attribute("C").Value;
-                TLGdata.farm = ISOTaskFile.Root.Descendants("FRM").Where(frm => frm.Attribute("A").Value == TSK.Attribute("D").Value).Single().Attribute("B").Value;
+                if (ISOTaskFile.Root.Descendants("FRM").Count() > 0)
+                {
+                    TLGdata.farm = ISOTaskFile.Root.Descendants("FRM").Where(frm => frm.Attribute("A").Value == TSK.Attribute("D").Value).Single().Attribute("B").Value;
+                }
+                else
+                {
+                    TLGdata.farm = "";
+                }
+                    
                 
                 List<string> devicelist = TSK.Elements("DAN").Attributes("C").Select(attr => attr.Value).ToList();
                 TLGdata.devices = ISOTaskFile.Root.Descendants("DVC").Where(dvc => devicelist.Contains(dvc.Attribute("A").Value)).Attributes("B").Select(attr => attr.Value).ToList();
@@ -1200,7 +1208,7 @@ namespace ISO_GML_Converter
                 
                 foreach (var element in datalogdata)
                 {
-                    string elName = element.name.Replace(" ", "_").Replace("&", "_").Replace("(", "_").Replace(")", "_");
+                    string elName = element.name.Replace(" ", "_").Replace("&", "_").Replace("(", "_").Replace(")", "_").Replace("/", "_");
                     if (Regex.IsMatch(elName, @"^[0-9]"))
                         elName = "X" + elName;
                     datapoint.Add(new XElement(tnt + elName, element.getValueString(index)));
