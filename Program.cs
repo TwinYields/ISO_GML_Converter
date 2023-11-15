@@ -411,6 +411,7 @@ namespace ISO_GML_Converter
         bool extractGeometryInformation(XElement TSK)
         {
             bool retvalue = true;
+            TLGdata.geometry.Clear();
 
             // TODO: read True Rotation Point; DDI=306 and 304 (Does anyone use it?)
             // TODO: read Actual relative connection angle; DDI=466  (Does anyone use it?)
@@ -421,7 +422,22 @@ namespace ISO_GML_Converter
                 // include devices that are listed in Task and are connected together
                 foreach (var CNN in TSK.Elements("CNN"))
                 {
-                    // TODO: read Connector Type; DDI=157  (0=unknown is default)
+                    /* 
+                     * TODO: read Connector Type; DDI=157  (0=unknown is default)
+                     * 
+                     * -1 = Not available 
+                     * 0 = unknown(default)
+                     * 1 = ISO 6489-3 Tractor drawbar
+                     * 2 = ISO 730 Three-point-hitch semi-mounted
+                     * 3 = ISO 730 Three-point-hitch mounted
+                     * 4 = ISO 6489-1 Hitch-hook
+                     * 5 = ISO 6489-2 Clevis coupling 40
+                     * 6 = ISO 6489-4 Piton type coupling
+                     * 7 = ISO 6489-5 CUNA hitch
+                     * 8 = ISO 24347 Ball type hitch
+                     * 9 = Chassis Mounted-Self-Propelled
+                     * 10 = ISO 5692-2 Pivot wagon hitch
+                     */                    
 
                     var DVC_0 = TSK.Ancestors().Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("A").Value).Single();
                     Point CRP_0 = extractGeometryOffset(DVC_0.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("B").Value).Single());
@@ -459,16 +475,19 @@ namespace ISO_GML_Converter
 
 
                     var DRP_1 = DVC_1.Descendants("DET").Where(det => det.Attribute("F").Value == "0").Single();
-                    TLGdata.geometry.Add(new TractorImplementGeometry()
+                    if (!hasGeometryOffset(DRP_1))  
                     {
-                        connection = TractorImplementGeometry.ConnectionType.Towed,
-                        TractorCRP = CRP_0,
-                        TractorNRP = NRP_0,
-                        ImplementCRP = CRP_1,
-                        ImplementERP = new Point(),
-                        yaw = YAW_reference,
-                        element = DRP_1.Attribute("A").Value                       
-                    });
+                        TLGdata.geometry.Add(new TractorImplementGeometry()
+                        {
+                            connection = TractorImplementGeometry.ConnectionType.Towed,
+                            TractorCRP = CRP_0,
+                            TractorNRP = NRP_0,
+                            ImplementCRP = CRP_1,
+                            ImplementERP = new Point(),
+                            yaw = YAW_reference,
+                            element = DRP_1.Attribute("A").Value
+                        });
+                    }
 
                     foreach (var ERP in DVC_1.Descendants("DET").Where(det => hasGeometryOffset(det)))
                     {
