@@ -162,14 +162,75 @@ namespace ISO_GML_Converter
         }
     }
 
-    public class TractorImplementGeometry
+    public class Connection
     {
+        /* 
+         * Connector Type; DDI=157  
+         *  
+         * -1 = Not available                               ==> Mounted
+         * 0 = unknown(default)                             ==> Mounted
+         * 1 = ISO 6489-3 Tractor drawbar                   ==> Towed
+         * 2 = ISO 730 Three-point-hitch semi-mounted       ==> Mounted
+         * 3 = ISO 730 Three-point-hitch mounted            ==> Mounted
+         * 4 = ISO 6489-1 Hitch-hook                        ==> Towed
+         * 5 = ISO 6489-2 Clevis coupling 40                ==> Towed
+         * 6 = ISO 6489-4 Piton type coupling               ==> Towed
+         * 7 = ISO 6489-5 CUNA hitch                        ==> Towed
+         * 8 = ISO 24347 Ball type hitch                    ==> Towed
+         * 9 = Chassis Mounted-Self-Propelled               ==> Mounted
+         * 10 = ISO 5692-2 Pivot wagon hitch                ==> Towed ???
+         */
+
         public enum ConnectionType
         {
             Mounted,
             Towed
         }
-        public ConnectionType connection;
+
+        public ConnectionType type = ConnectionType.Mounted;
+        public DPD_Reference DPD_type = null;
+
+        public Connection(ConnectionType type = ConnectionType.Mounted)
+        {
+            this.type = type;
+        }
+
+        static public Connection.ConnectionType DDIValueToConnection(int value)
+        {
+            switch (value)
+            {
+                case 1:
+                case 4:
+                case 5:
+                case 6:
+                case 7:
+                case 8:
+                case 10:
+                    return Connection.ConnectionType.Towed;
+                default:
+                    return Connection.ConnectionType.Mounted;
+            }
+        }
+
+        public override string ToString()
+        {
+            string output = "";
+
+            output += " ";
+            if (DPD_type != null)
+                output += "<" + DPD_type.element + " (" + DPD_type.DDI + ")>";
+            else
+                output += type;
+
+            return output;
+        }
+    }
+
+
+    public class TractorImplementGeometry
+    {
+
+        public Connection connection;
 
         public string element;      // reference to DeviceElementReferencePoint
         public string description;
@@ -189,6 +250,24 @@ namespace ISO_GML_Converter
         public List<LogElement> datalogheader = new List<LogElement>();
         public List<LogElement> datalogdata = new List<LogElement>();
 
+
+        public Connection.ConnectionType getConnection(int index)
+        {
+            if (connection.DPD_type != null)
+            {
+                var DPD = datalogdata.Where(data => data.DPD.DDI == connection.DPD_type.DDI && data.DPD.element == connection.DPD_type.element);
+                if (DPD.Count() == 1)
+                {
+                    connection.type = Connection.DDIValueToConnection(((LogElementType<System.Int32>)DPD.Single()).values[index]);
+                }
+                else
+                {
+                    // TODO: this should throw exception
+                }
+            }
+
+            return connection.type;
+        }
 
         public Point getValues(Point point, int index)
         {
@@ -422,28 +501,13 @@ namespace ISO_GML_Converter
                 // include devices that are listed in Task and are connected together
                 foreach (var CNN in TSK.Elements("CNN"))
                 {
-                    /* 
-                     * TODO: read Connector Type; DDI=157  (0=unknown is default)
-                     * 
-                     * -1 = Not available 
-                     * 0 = unknown(default)
-                     * 1 = ISO 6489-3 Tractor drawbar
-                     * 2 = ISO 730 Three-point-hitch semi-mounted
-                     * 3 = ISO 730 Three-point-hitch mounted
-                     * 4 = ISO 6489-1 Hitch-hook
-                     * 5 = ISO 6489-2 Clevis coupling 40
-                     * 6 = ISO 6489-4 Piton type coupling
-                     * 7 = ISO 6489-5 CUNA hitch
-                     * 8 = ISO 24347 Ball type hitch
-                     * 9 = Chassis Mounted-Self-Propelled
-                     * 10 = ISO 5692-2 Pivot wagon hitch
-                     */                    
-
                     var DVC_0 = TSK.Ancestors().Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("A").Value).Single();
-                    Point CRP_0 = extractGeometryOffset(DVC_0.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("B").Value).Single());
+                    var CRP_0_DET = DVC_0.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("B").Value).Single();
+                    Point CRP_0 = extractGeometryOffset(CRP_0_DET);
 
                     var DVC_1 = TSK.Ancestors().Descendants("DVC").Where(dvc => dvc.Attribute("A").Value == CNN.Attribute("C").Value).Single();
-                    Point CRP_1 = extractGeometryOffset(DVC_1.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("D").Value).Single());
+                    var CRP_1_DET = DVC_1.Descendants("DET").Where(det => det.Attribute("A").Value == CNN.Attribute("D").Value).Single();
+                    Point CRP_1 = extractGeometryOffset(CRP_1_DET);
 
                     var NRP = DVC_0.Descendants("DET").Where(det => det.Attribute("C").Value == "7");
                     if (!NRP.Any())
@@ -452,6 +516,10 @@ namespace ISO_GML_Converter
                         var DVC_temp = DVC_0;
                         DVC_0 = DVC_1;
                         DVC_1 = DVC_temp;
+
+                        var CRP_DET = CRP_0_DET;
+                        CRP_0_DET = CRP_1_DET;
+                        CRP_1_DET = CRP_DET;
 
                         var CRP_temp = CRP_0;
                         CRP_0 = CRP_1;
@@ -467,19 +535,29 @@ namespace ISO_GML_Converter
 
                     DPD_Reference YAW_reference = null;
                     var YAW_DPD = DVC_0.Descendants("DPD").Where(dpd => Convert.ToInt32(dpd.Attribute("B").Value, 16) == 144);
-                    if(YAW_DPD.Any())
+                    if (YAW_DPD.Any())
                     {
                         var DET = DVC_0.Descendants("DOR").Where(dor => dor.Attribute("A").Value == YAW_DPD.Single().Attribute("A").Value).First().Parent;
                         YAW_reference = new DPD_Reference(DET.Attribute("A").Value, YAW_DPD.Single().Attribute("B").Value);
                     }
 
 
+                    var DOR = CRP_1_DET.Descendants("DOR").Attributes("A").Select(atr => atr.Value).ToList();
+                    var ConnectionTypeDPT = DVC_1.Descendants("DPT").Where(dpt => DOR.Contains(dpt.Attribute("A").Value) && Convert.ToInt32(dpt.Attribute("B").Value, 16) == 157);
+                    var ConnectionTypeDPD = DVC_1.Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && Convert.ToInt32(dpd.Attribute("B").Value, 16) == 157);
+
+                    Connection connection = new Connection();
+                    if (ConnectionTypeDPD.Any())
+                        connection.DPD_type = new DPD_Reference(CRP_1_DET.Attribute("A").Value, ConnectionTypeDPD.Single().Attribute("B").Value);
+                    if (ConnectionTypeDPT.Any())
+                        connection.type = Connection.DDIValueToConnection(Int32.Parse(ConnectionTypeDPT.Single().Attribute("C").Value));
+                    
                     var DRP_1 = DVC_1.Descendants("DET").Where(det => det.Attribute("F").Value == "0").Single();
                     if (!hasGeometryOffset(DRP_1))  
                     {
                         TLGdata.geometry.Add(new TractorImplementGeometry()
                         {
-                            connection = TractorImplementGeometry.ConnectionType.Towed,
+                            connection = connection,
                             TractorCRP = CRP_0,
                             TractorNRP = NRP_0,
                             ImplementCRP = CRP_1,
@@ -493,7 +571,7 @@ namespace ISO_GML_Converter
                     {
                         TLGdata.geometry.Add(new TractorImplementGeometry()
                         {
-                            connection = TractorImplementGeometry.ConnectionType.Towed,
+                            connection = connection,
                             TractorCRP = CRP_0,
                             TractorNRP = NRP_0,
                             ImplementCRP = CRP_1,
@@ -524,7 +602,7 @@ namespace ISO_GML_Converter
 
                         TLGdata.geometry.Add(new TractorImplementGeometry()
                         {
-                            connection = TractorImplementGeometry.ConnectionType.Mounted,
+                            connection = new Connection(Connection.ConnectionType.Mounted),
                             TractorCRP = new Point(),
                             TractorNRP = NRP_0,
                             ImplementCRP = new Point(),
@@ -537,7 +615,7 @@ namespace ISO_GML_Converter
                         {
                             TLGdata.geometry.Add(new TractorImplementGeometry()
                             {
-                                connection = TractorImplementGeometry.ConnectionType.Mounted,
+                                connection = new Connection(Connection.ConnectionType.Mounted),
                                 TractorCRP = new Point(),
                                 TractorNRP = NRP_0,
                                 ImplementCRP = new Point(),
@@ -559,7 +637,7 @@ namespace ISO_GML_Converter
 
             TLGdata.geometry.Add(new TractorImplementGeometry()
             {
-                connection = TractorImplementGeometry.ConnectionType.Mounted,
+                connection = new Connection(Connection.ConnectionType.Mounted),
                 TractorCRP = new Point(),
                 TractorNRP = new Point(),
                 ImplementCRP = new Point(),
@@ -987,13 +1065,13 @@ namespace ISO_GML_Converter
                     position += geometry.getValues(geometry.TractorCRP, i).RotateZ(yaw[i]);
 
                     // simulate the implement angle
-                    switch(geometry.connection)
+                    switch(geometry.getConnection(i))
                     {
-                        case TractorImplementGeometry.ConnectionType.Mounted:
+                        case Connection.ConnectionType.Mounted:
                             implementYaw = yaw[i];
                             break;
 
-                        case TractorImplementGeometry.ConnectionType.Towed:
+                        case Connection.ConnectionType.Towed:
 
                             // If distance between DRP and CRP is not positive, it cannot be Towed implement
                             if (CRP != null && geometry.getValues(geometry.ImplementCRP, i).x > 0)
