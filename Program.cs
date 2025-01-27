@@ -258,6 +258,8 @@ namespace ISO_GML_Converter
         };
 
         OutputType outputType = OutputType.GML;
+        bool cartesianCoordinates = false;
+        bool useGeometry = true;
 
 
         static void Main(string[] args)
@@ -279,6 +281,14 @@ namespace ISO_GML_Converter
                                            
                     switch(options[0])
                     {
+                        case "-c":
+                        case "-cartesian":
+                            cartesianCoordinates = true;
+                            break;
+                        case "-n":
+                        case "-nosimulation":
+                            useGeometry = false;
+                            break;
                         case "-o":
                         case "-output":
                             switch(options[1])
@@ -687,7 +697,7 @@ namespace ISO_GML_Converter
                     geometry = TLGdata.geometry.Where(geo => geo.element == DET_geometry.Attribute("A").Value);
                 }
 
-                if (geometry.Any())
+                if (geometry.Any() && useGeometry)
                     geometry.Single().datalogdata.Add(logelement);
                 else
                     TLGdata.geometry.Where(geo => geo.element == "original").Single().datalogdata.Add(logelement);
@@ -745,6 +755,7 @@ namespace ISO_GML_Converter
 
 
                     System.Byte DLVs = reader.ReadByte();
+
                     for (int n = 0; n < DLVs; n++)
                     {
                         System.Byte DLVn = reader.ReadByte();
@@ -762,14 +773,16 @@ namespace ISO_GML_Converter
                 {
                     LogElementType<System.String> element = (LogElementType<System.String>)header.Current;
                     DateTime date = new DateTime(1980, 1, 1);
-                    date = date.AddDays(reader.ReadUInt16());
+                    ushort days = reader.ReadUInt16();
+                    date = date.AddDays(days);
                     element.values.Add(date.ToShortDateString());
                 }
                 else if (header.Current.name == "TimeStartTOFD" || header.Current.name == "GpsUtcTime")
                 {
                     LogElementType<System.String> element = (LogElementType<System.String>)header.Current;
                     DateTime date = new DateTime();
-                    date = date.AddMilliseconds(reader.ReadUInt32());
+                    uint seconds = reader.ReadUInt32();
+                    date = date.AddMilliseconds(seconds);
                     element.values.Add(date.TimeOfDay.ToString());
                 }
                 else if (header.Current.type == typeof(System.Byte))
@@ -998,20 +1011,23 @@ namespace ISO_GML_Converter
                     // calculate the ERP position
                     position += geometry.getValues(geometry.ImplementERP, i).RotateZ(implementYaw);
 
-                    // convert ENU coordinates to WGS-84 coordinates 
-                    GpsUtils.EnuToGeodetic(position.x, position.y, position.z,
-                                              lat0, lon0, h0,
-                                              out double lat, out double lon, out double h);
+                    if (cartesianCoordinates)
+                    {
+                        LogLat.values.Add((Int32)(position.x * 1000));
+                        LogLon.values.Add((Int32)(position.y * 1000));
+                        LogUp.values.Add((Int32)(position.z * 1000));
+                    }
+                    else
+                    {
+                        // convert ENU coordinates to WGS-84 coordinates 
+                        GpsUtils.EnuToGeodetic(position.x, position.y, position.z,
+                                                  lat0, lon0, h0,
+                                                  out double lat, out double lon, out double h);
 
-                    LogLat.values.Add((Int32)(lat * 10000000));
-                    LogLon.values.Add((Int32)(lon * 10000000));
-                    LogUp.values.Add((Int32)(h * 1000));
-
-                    /*
-                    LogLat.values.Add((Int32)(position.x * 1000));
-                    LogLon.values.Add((Int32)(position.y * 1000));
-                    LogUp.values.Add((Int32)(position.z * 1000));
-                    */
+                        LogLat.values.Add((Int32)(lat * 10000000));
+                        LogLon.values.Add((Int32)(lon * 10000000));
+                        LogUp.values.Add((Int32)(h * 1000));
+                    }
                 }
 
                 // create datalogheader
