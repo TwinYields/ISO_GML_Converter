@@ -29,6 +29,8 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Reflection;
+using System.Runtime.InteropServices.ComTypes;
 
 namespace ISO_GML_Converter
 {
@@ -336,10 +338,9 @@ namespace ISO_GML_Converter
             CSV
         };
 
-        OutputType outputType = OutputType.GML;
+        OutputType outputType = OutputType.CSV;
         bool cartesianCoordinates = false;
         bool useGeometry = true;
-
 
         static void Main(string[] args)
         {
@@ -387,15 +388,25 @@ namespace ISO_GML_Converter
                             }
                             break;
                         default:
-                            Console.WriteLine("Unknown parameter");
-                            Console.WriteLine("Possible values are:");
-                            Console.WriteLine("-o/-output=[GML, CSV]");
+                            var version = Assembly.GetEntryAssembly().GetName().Version;
+                            var buildDateTime = new DateTime(2000, 1, 1).Add(new TimeSpan(TimeSpan.TicksPerDay * version.Build + TimeSpan.TicksPerSecond * 2 * version.Revision));
+
+                            Console.WriteLine(Assembly.GetEntryAssembly().GetName().Name + " " + version.Major + "." + version.Minor + " BUILD " + buildDateTime);
+                            Console.WriteLine("");
+                            Console.WriteLine("USE: ");
+                            Console.WriteLine(Assembly.GetEntryAssembly().GetName().Name + " [drive:][path][filename] [-o=[GML, CSV]] [-c] [-n]"); 
+                            Console.WriteLine("Parameters:");
+                            Console.WriteLine("-o/-output=[GML, CSV]    Select output file type");
+                            Console.WriteLine("-c/-cartesian            Use cartesian output instead of WGS84");
+                            Console.WriteLine("-n/-nosimulation         Use original GNNS position instead of geometry corrected position");
                             return;
                     }
                 }
                 else
                 {
                     taskfilename = args[0];
+                    if (System.IO.Path.GetDirectoryName(taskfilename) == "")
+                        taskfilename = Directory.GetCurrentDirectory() + "\\" + taskfilename;
                 }
             }
                             
@@ -746,13 +757,31 @@ namespace ISO_GML_Converter
                 try
                 {
                     var DOR = DET.Descendants("DOR").Attributes("A").Select(atr => atr.Value).ToList();
-                    var DPD = DET.Parent.Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && dpd.Attribute("B").Value == ProcessDataDDI).Single();
+                    var DPD = DET.Parent.Descendants("DPD").Where(dpd => DOR.Contains(dpd.Attribute("A").Value) && dpd.Attribute("B").Value == ProcessDataDDI);
 
-                    string DVCdesignator = DET.Parent.Attribute("B").Value;  // Note! optional attribute
-                    string DETdesignator = DET.Attribute("D").Value; // Note! optional attribute
-                    string DPDdesignator = DPD.Attribute("E").Value; // Note! optional attribute --> Use DDI description instead
+                    string DVCdesignator = DET.Parent.Attribute("A").Value;
+                    if(DET.Parent.Attribute("B") != null)
+                        DVCdesignator = DET.Parent.Attribute("B").Value;  
 
-                    logelement = new LogElementType<System.Int32>(DVCdesignator + "_" + DETdesignator + "_" + DPDdesignator) { DPD = new DPD_Reference(DeviceElementIdRef, ProcessDataDDI) };
+                    string DETdesignator = "_" + DET.Attribute("A").Value; 
+                    if(DET.Attribute("D") != null)
+                        DETdesignator = "_" + DET.Attribute("D").Value;
+
+                    string DPDdesignator = "_" + ProcessDataDDI;
+                    if (DPD.Any())
+                    {
+                        DPDdesignator = "_" + DPD.Single().Attribute("E").Value; // Note! optional attribute --> Use DDI description instead
+                    }
+
+                    string name = DVCdesignator + DETdesignator + DPDdesignator;
+
+                    // Special case for PNG based logging, take name from other attributes
+                    if (String.Equals(ProcessDataDDI, "DFFE", StringComparison.OrdinalIgnoreCase))
+                    {
+                        name += "_PGN_" + DLV.Attribute("D").Value + "_BITS_" + DLV.Attribute("E").Value + "_TO_" + DLV.Attribute("F").Value;
+                    }
+
+                    logelement = new LogElementType<System.Int32>(name) { DPD = new DPD_Reference(DeviceElementIdRef, ProcessDataDDI) };
                     try
                     {
                         logelement.values.Add(System.Int32.Parse(DLV.Attribute("B").Value));
@@ -767,7 +796,15 @@ namespace ISO_GML_Converter
                 {
                     Console.WriteLine("Process data description not found!");
 
-                    logelement = new LogElementType<System.Int32>(DeviceElementIdRef + "_" + ProcessDataDDI) { DPD = new DPD_Reference(DeviceElementIdRef, ProcessDataDDI) };
+                    string name = DeviceElementIdRef + "_" + ProcessDataDDI;
+
+                    // Special case for PNG based logging, take name from other attributes
+                    if (String.Equals(ProcessDataDDI,"DFFE", StringComparison.OrdinalIgnoreCase))
+                    {
+                        name = DeviceElementIdRef + "_PGN_" + DLV.Attribute("D").Value + "_BITS_" + DLV.Attribute("E").Value + "_TO_" + DLV.Attribute("F").Value;
+                    }
+
+                    logelement = new LogElementType<System.Int32>(name) { DPD = new DPD_Reference(DeviceElementIdRef, ProcessDataDDI) };
                     try
                     {
                         logelement.values.Add(System.Int32.Parse(DLV.Attribute("B").Value));
